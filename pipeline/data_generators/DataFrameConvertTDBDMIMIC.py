@@ -68,6 +68,45 @@ class DTGPTDataFrameConverterTemplateTextBasicDescriptionMIMIC(DataFrameConverte
         num_tokens = len(tokens) - 1  # -1 since there is end of line
         return num_tokens
 
+    @staticmethod
+    def _normalize_prediction_list(values, expected_length, column_name):
+        if not isinstance(values, list):
+            raise ValueError(
+                "Prediction column "
+                + str(column_name)
+                + " must decode to a list, got "
+                + type(values).__name__
+            )
+
+        normalized_values = list(values[:expected_length])
+        actual_length = len(values)
+
+        if len(normalized_values) < expected_length:
+            normalized_values.extend([np.nan] * (expected_length - len(normalized_values)))
+
+        return normalized_values, actual_length
+
+    @staticmethod
+    def _normalize_prediction_dictionary(data_as_dic, expected_columns, expected_length):
+        normalized = {}
+        normalization_issues = []
+
+        for col in expected_columns:
+            raw_values = data_as_dic.get(col, [])
+            normalized_values, actual_length = (
+                DTGPTDataFrameConverterTemplateTextBasicDescriptionMIMIC._normalize_prediction_list(
+                    raw_values,
+                    expected_length,
+                    col,
+                )
+            )
+            normalized[col] = normalized_values
+
+            if actual_length != expected_length:
+                normalization_issues.append((col, actual_length, expected_length))
+
+        return normalized, normalization_issues
+
 
 
     def _get_columns_descriptive_mapping(original_columns, column_name_mapping):
@@ -566,6 +605,7 @@ class DTGPTDataFrameConverterTemplateTextBasicDescriptionMIMIC(DataFrameConverte
                 all_positions = sorted(list(set([y for x in column_wise_date_mapping.values() for y in x])))
 
                 for col in column_wise_date_mapping.keys():
+                    data_as_dic.setdefault(col, [])
                     
                     positions = column_wise_date_mapping[col]
                     indices = [all_positions.index(x) for x in positions]
@@ -573,6 +613,28 @@ class DTGPTDataFrameConverterTemplateTextBasicDescriptionMIMIC(DataFrameConverte
                     for idx in range(len(all_positions)):
                         if idx not in indices:
                             data_as_dic[col].insert(idx, np.nan)
+
+                expected_columns = list(column_wise_date_mapping.keys())
+                expected_length = len(all_positions)
+            else:
+                expected_columns = list(data_as_dic.keys())
+                expected_length = len(all_prediction_days)
+
+            data_as_dic, normalization_issues = (
+                DTGPTDataFrameConverterTemplateTextBasicDescriptionMIMIC._normalize_prediction_dictionary(
+                    data_as_dic,
+                    expected_columns,
+                    expected_length,
+                )
+            )
+
+            if normalization_issues:
+                logging.warning(
+                    "Normalized malformed prediction lengths for patient %s sample %s: %s",
+                    patientid,
+                    patient_sample_index,
+                    normalization_issues,
+                )
             
             # Convert from dic to DF
             prediction_df = pd.DataFrame.from_dict(data_as_dic, orient='columns')
@@ -634,7 +696,6 @@ class DTGPTDataFrameConverterTemplateTextBasicDescriptionMIMIC(DataFrameConverte
         
         #: return
         return prediction_df
-
 
 
 
