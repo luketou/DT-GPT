@@ -58,7 +58,12 @@ echo "MIMIC raw events dir: ${DTGPT_MIMIC_RAW_EVENTS_DIR}"
 echo "MIMIC raw stats path: ${DTGPT_MIMIC_RAW_STATS_PATH}"
 "${PYTHON_BIN}" 1_experiments/2024_02_08_mimic_iv/4_dt_gpt_instruction/2024_04_11_biomistral_td_bd_summarized_row/smoke_check_mimic_local_setup.py
 
+echo "Training mode: LoRA"
 "${PYTHON_BIN}" 1_experiments/2024_02_08_mimic_iv/4_dt_gpt_instruction/2024_04_11_biomistral_td_bd_summarized_row/2024_04_08_dt_gpt_bd_bm_summarized_row_mimic.py \
+    --use-lora \
+    --lora-r "${DTGPT_LORA_R:-16}" \
+    --lora-alpha "${DTGPT_LORA_ALPHA:-32}" \
+    --lora-dropout "${DTGPT_LORA_DROPOUT:-0.05}" \
     --gradient-checkpointing \
     --train-batch-size 1 \
     --validation-batch-size "${VALIDATION_BATCH_SIZE}" \
