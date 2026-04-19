@@ -20,3 +20,6 @@
 
 # results
 /3_results
+
+# local git worktrees
+/.worktrees/
