@@ -5,103 +5,92 @@ import os
 import importlib
 import subprocess
 
+REPO_ROOT = Path(__file__).resolve().parents[4]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from pipeline.local_paths import get_mimic_external_pipeline_root
+from build_demo_raw_events import build_demo_raw_events
+
 
 # This whole script is based on the pipeline in: https://github.com/healthylaife/MIMIC-IV-Data-Pipeline
 # WARNING: this is a very hacky way of doing things, but it works for now.
 # NOTE: this script then generates the data in the pipeline's directory, you need to copy over the results into your own directory (see README.md).
 
 
-PATH_TO_MIMIC_IV_DATA_PIPELINE = "/home/makaron1/scratch/mimic-iv/"
+PIPELINE_ROOT = get_mimic_external_pipeline_root()
+if PIPELINE_ROOT is None:
+    PIPELINE_ROOT = None
 
+if PIPELINE_ROOT is not None:
+    os.chdir(PIPELINE_ROOT)
 
-os.chdir(PATH_TO_MIMIC_IV_DATA_PIPELINE + 'MIMIC-IV-Data-Pipeline')
+    module_path = str(PIPELINE_ROOT)
+    if module_path not in sys.path:
+        sys.path.append(module_path)
 
+    module_path='preprocessing/day_intervals_preproc'
+    if module_path not in sys.path:
+        sys.path.append(module_path)
 
-module_path=PATH_TO_MIMIC_IV_DATA_PIPELINE + 'MIMIC-IV-Data-Pipeline'
-if module_path not in sys.path:
-    sys.path.append(module_path)
+    module_path = str(PIPELINE_ROOT / "utils")
+    if module_path not in sys.path:
+        sys.path.append(module_path)
+        
+    module_path='preprocessing/hosp_module_preproc'
+    if module_path not in sys.path:
+        sys.path.append(module_path)
+        
+    module_path='model'
+    if module_path not in sys.path:
+        sys.path.append(module_path)
+    root_dir = str(PIPELINE_ROOT)
+    import day_intervals_cohort
+    from day_intervals_cohort import *
 
-module_path='preprocessing/day_intervals_preproc'
-if module_path not in sys.path:
-    sys.path.append(module_path)
+    import day_intervals_cohort_v2
+    from day_intervals_cohort_v2 import *
 
-module_path=PATH_TO_MIMIC_IV_DATA_PIPELINE + 'MIMIC-IV-Data-Pipeline/utils'
-if module_path not in sys.path:
-    sys.path.append(module_path)
-    
-module_path='preprocessing/hosp_module_preproc'
-if module_path not in sys.path:
-    sys.path.append(module_path)
-    
-module_path='model'
-if module_path not in sys.path:
-    sys.path.append(module_path)
-#print(sys.path)
-root_dir = PATH_TO_MIMIC_IV_DATA_PIPELINE + "/MIMIC-IV-Data-Pipeline"
-import day_intervals_cohort
-from day_intervals_cohort import *
+    import data_generation_icu
 
-import day_intervals_cohort_v2
-from day_intervals_cohort_v2 import *
+    import data_generation
+    import evaluation
 
-import data_generation_icu
+    import feature_selection_hosp
+    from feature_selection_hosp import *
 
-import data_generation
-import evaluation
+    import tokenization
+    from tokenization import *
 
+    import feature_selection_icu
+    from feature_selection_icu import *
+    import fairness
+    import callibrate_output
 
+    importlib.reload(day_intervals_cohort)
+    import day_intervals_cohort
+    from day_intervals_cohort import *
 
-import feature_selection_hosp
-from feature_selection_hosp import *
+    importlib.reload(day_intervals_cohort_v2)
+    import day_intervals_cohort_v2
+    from day_intervals_cohort_v2 import *
 
-# import train
-# from train import *
+    importlib.reload(data_generation_icu)
+    import data_generation_icu
+    importlib.reload(data_generation)
+    import data_generation
 
+    importlib.reload(feature_selection_hosp)
+    import feature_selection_hosp
+    from feature_selection_hosp import *
 
-#import ml_models
-#from ml_models import *
+    importlib.reload(feature_selection_icu)
+    import feature_selection_icu
+    from feature_selection_icu import *
 
-#import dl_train
-#from dl_train import *
-
-import tokenization
-from tokenization import *
-
-
-#import behrt_train
-#from behrt_train import *
-
-import feature_selection_icu
-from feature_selection_icu import *
-import fairness
-import callibrate_output
-
-
-
-importlib.reload(day_intervals_cohort)
-import day_intervals_cohort
-from day_intervals_cohort import *
-
-importlib.reload(day_intervals_cohort_v2)
-import day_intervals_cohort_v2
-from day_intervals_cohort_v2 import *
-
-importlib.reload(data_generation_icu)
-import data_generation_icu
-importlib.reload(data_generation)
-import data_generation
-
-importlib.reload(feature_selection_hosp)
-import feature_selection_hosp
-from feature_selection_hosp import *
-
-importlib.reload(feature_selection_icu)
-import feature_selection_icu
-from feature_selection_icu import *
-
-importlib.reload(tokenization)
-import tokenization
-from tokenization import *
+    importlib.reload(tokenization)
+    import tokenization
+    from tokenization import *
 
 
 
@@ -110,6 +99,14 @@ import wandb
 debug = False
 
 def main():
+
+    if PIPELINE_ROOT is None:
+        result = build_demo_raw_events()
+        print(
+            "DTGPT_MIMIC_PIPELINE_ROOT not set; generated demo raw events directly from "
+            f"local MIMIC demo data: {result}"
+        )
+        return
 
     #: setup wandb
     if debug:
@@ -240,8 +237,5 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
 
 

@@ -20,7 +20,7 @@ class DataProcessorBiomistral():
         self.tokenizer = AutoTokenizer.from_pretrained(model_to_use, 
                                                         force_download=False,
                                                         truncation_side="left",
-                                                        padding_side="left",
+                                                        padding_side="right",
                                                         add_eos_token=True,
                                                         add_bos_token=True)
         

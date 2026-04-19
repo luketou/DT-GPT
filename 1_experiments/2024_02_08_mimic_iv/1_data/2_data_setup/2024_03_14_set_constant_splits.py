@@ -1,6 +1,14 @@
 import numpy
 import random
 import pandas as pd
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from pipeline.local_paths import get_mimic_constants_path
 
 
 
@@ -12,7 +20,7 @@ if __name__ == '__main__':
 
     train_val_test_split = [0.8, 0.1, 0.1]
 
-    constants_path = "/home/makaron1/uc2_nsclc/2_experiments/2024_02_08_mimic_iv/1_data/0_final_data/constants.csv"
+    constants_path = get_mimic_constants_path()
 
     # Load constants
     constants = pd.read_csv(constants_path)
@@ -44,6 +52,4 @@ if __name__ == '__main__':
     constants.to_csv(constants_path, index=False)
 
     
-
-
 

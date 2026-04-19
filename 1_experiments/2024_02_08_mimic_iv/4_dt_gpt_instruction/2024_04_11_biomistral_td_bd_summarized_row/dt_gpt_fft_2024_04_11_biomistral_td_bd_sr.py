@@ -1,4 +1,11 @@
 import __init__
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from pipeline.EvaluationManager import EvaluationManager
 from pipeline.Experiment import Experiment
 import wandb
@@ -18,6 +25,13 @@ from trl import SFTTrainer
 import json
 from pipeline.Splitters import After24HSplitter
 from pipeline.NormalizationFilterManager import Only_Standardization
+from pipeline.local_paths import (
+    get_biomistral_model_path,
+    get_mimic_column_descriptive_mapping_path,
+    get_mimic_dataset_statistics_path,
+    get_model_load_kwargs,
+    get_precision_config,
+)
 
 
 
@@ -41,8 +55,9 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
         
         MIN_NR_DAYS_FORECAST = 24   # We want to forecast up to the first visit after this value, or until the start of the next therapy (which ever comes first) - using 91 since it is the closest multiple of 7 to 90 days - often used for meds
         SEQUENCE_MAX_LENGTH_IN_TOKENS = seq_max_len_in_tokens
-        MODEL_HF_NAME = "BioMistral/BioMistral-7B-DARE"
+        MODEL_HF_NAME = get_biomistral_model_path()
         DECIMAL_PRECISION = decimal_precision
+        precision_config = get_precision_config(training=True)
 
         # Setup hyperparameters
         LEARNING_RATE = learning_rate                # From meditron paper (pretraining setting)
@@ -96,7 +111,7 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
 
         test_events, test_meta = splitter.setup_split_indices(test_full_events, eval_manager)
         
-        path_to_statistics_file = experiment.base_path + "2_experiments/2024_02_08_mimic_iv/1_data/0_final_data/dataset_statistics.json"
+        path_to_statistics_file = str(get_mimic_dataset_statistics_path())
         with open(path_to_statistics_file) as f:
             statistics_dic = json.load(f)
         
@@ -155,10 +170,10 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
 
 
         # Setup column mapping
-        column_mapping = pd.read_csv(experiment.base_path + "2_experiments/2024_02_08_mimic_iv/1_data/0_final_data/column_descriptive_name_mapping.csv")
+        column_mapping = pd.read_csv(get_mimic_column_descriptive_mapping_path())
 
         # Setup statistics paths
-        path_to_statistics_file = experiment.base_path + "2_experiments/2024_02_08_mimic_iv/1_data/0_final_data/dataset_statistics.json"
+        path_to_statistics_file = str(get_mimic_dataset_statistics_path())
         with open(path_to_statistics_file) as f:
             statistics_dic = json.load(f)
 
@@ -255,13 +270,19 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
 
             logging.info("Setting up model")
 
+            model_load_kwargs = get_model_load_kwargs(
+                experiment.model_cache_path,
+                training=True,
+            )
             
             # Load in Meditron
-            model = AutoModelForCausalLM.from_pretrained(MODEL_HF_NAME, 
-                                                        cache_dir=experiment.model_cache_path,
-                                                        torch_dtype=torch.bfloat16,
-                                                        device_map="auto", 
-                                                        attn_implementation="flash_attention_2")
+            model = AutoModelForCausalLM.from_pretrained(
+                MODEL_HF_NAME,
+                **model_load_kwargs,
+            )
+
+            if gradient_checkpointing:
+                model.config.use_cache = False
 
             logging.info("Num params in model: " + str(model.num_parameters()))
 
@@ -283,8 +304,8 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
                 logging_steps=logging_steps,
                 learning_rate=LEARNING_RATE,
                 weight_decay=WEIGHT_DECAY,
-                fp16=False,
-                bf16=True,
+                fp16=precision_config["fp16"],
+                bf16=precision_config["bf16"],
                 num_train_epochs=NUM_TRAIN_EPOCHS,
                 warmup_ratio=WARMUP_RATIO,
                 group_by_length=True,
@@ -337,10 +358,11 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
 
             model = AutoModelForCausalLM.from_pretrained(
                 finetune_model_path,
-                cache_dir=experiment.model_cache_path,
-                torch_dtype=torch.bfloat16,
-                device_map="auto", 
-                attn_implementation="flash_attention_2")
+                **get_model_load_kwargs(
+                    experiment.model_cache_path,
+                    training=False,
+                ),
+            )
 
 
         if eval_model_path is not None:
@@ -349,10 +371,11 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
 
             model = AutoModelForCausalLM.from_pretrained(
                 eval_model_path,
-                cache_dir=experiment.model_cache_path,
-                torch_dtype=torch.bfloat16,
-                device_map="auto", 
-                attn_implementation="flash_attention_2")
+                **get_model_load_kwargs(
+                    experiment.model_cache_path,
+                    training=False,
+                ),
+            )
 
 
         # Setup data processing for inference
@@ -464,7 +487,3 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
 
         ############################################################ Finish run ############################################################
         wandb.run.finish()
-
-
-
-

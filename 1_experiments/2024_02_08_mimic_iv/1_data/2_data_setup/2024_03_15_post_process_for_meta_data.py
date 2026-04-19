@@ -1,6 +1,25 @@
 import numpy as np
 import json
+import sys
+from pathlib import Path
 import wandb
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from pipeline.local_paths import (
+    ensure_runtime_cache_env,
+    ensure_directory,
+    get_mimic_column_descriptive_mapping_path,
+    get_mimic_column_mapping_json_path,
+    get_mimic_constants_path,
+    get_mimic_dataset_statistics_path,
+    get_mimic_final_events_dir,
+    get_mimic_patient_subsets_dir,
+    get_mimic_raw_stats_path,
+    get_tokenizer_model_path,
+)
 
 # This script generates all necessary meta data in one go
 # used to be multiple scripts but merged for simplicity
@@ -24,7 +43,7 @@ def generate_column_mapping():
 
 
     # get an example events file for the columns
-    example_events_df = pd.read_csv("/home/makaron1/uc2_nsclc/2_experiments/2024_02_08_mimic_iv/1_data/0_final_data/events/1_events.csv")
+    example_events_df = pd.read_csv(get_mimic_final_events_dir() / "1_events.csv")
 
 
     # drop first columns as they are junk
@@ -58,15 +77,15 @@ def generate_column_mapping():
         
 
     # save as json
-    with open('/home/makaron1/uc2_nsclc/2_experiments/2024_02_08_mimic_iv/1_data/0_final_data/column_mapping.json', 'w') as f:
+    with open(get_mimic_column_mapping_json_path(), 'w') as f:
         json.dump(mapping, f, indent=4)
 
 
     #: add column path_to_events_file in constants without altering patient indexing
-    constants = pd.read_csv("/home/makaron1/uc2_nsclc/2_experiments/2024_02_08_mimic_iv/1_data/0_final_data/constants.csv")
+    constants = pd.read_csv(get_mimic_constants_path())
     constants = constants.loc[:, ~constants.columns.str.contains(r"^Unnamed")]
     constants["path_to_events_file"] = constants["patientid"].astype(str) + "_events.csv"
-    constants.to_csv("/home/makaron1/uc2_nsclc/2_experiments/2024_02_08_mimic_iv/1_data/0_final_data/constants.csv")
+    constants.to_csv(get_mimic_constants_path(), index=False)
 
     print("Finished with generate_column_mapping")
 
@@ -225,7 +244,7 @@ def dataset_statistics_loader():
             return super(NpEncoder, self).default(obj)
         
 
-    with open("/home/makaron1/uc2_nsclc/2_experiments/2024_02_08_mimic_iv/1_data/0_final_data/dataset_statistics.json", "w") as outfile: 
+    with open(get_mimic_dataset_statistics_path(), "w") as outfile:
         json.dump(summarized_vals, outfile, cls=NpEncoder, indent=4)   
 
 
@@ -253,7 +272,7 @@ def make_random_patient_subsets():
 
 
 
-        constants = pd.read_csv("/home/makaron1/uc2_nsclc/2_experiments/2024_02_08_mimic_iv/1_data/0_final_data/constants.csv")
+        constants = pd.read_csv(get_mimic_constants_path())
 
 
         constants_split = constants[constants["dataset_split"] == split_to_select]
@@ -272,7 +291,8 @@ def make_random_patient_subsets():
 
 
         # Save as json
-        with open('/home/makaron1/uc2_nsclc/2_experiments/2024_02_08_mimic_iv/1_data/0_final_data/patient_subsets/' + file_name +'.json', 'w') as f:
+        ensure_directory(get_mimic_patient_subsets_dir())
+        with open(get_mimic_patient_subsets_dir() / f"{file_name}.json", 'w') as f:
             json.dump(save_dic, f, indent=4)
 
 
@@ -299,7 +319,7 @@ def mapping_file_generation():
     #: make columns group, original_column_names, descriptive_column_name
 
     #: load raw stats
-    with open("/home/makaron1/uc2_nsclc/2_experiments/2024_02_08_mimic_iv/1_data/1_preprocessing/2024_02_01_raw_data_stats.json") as f:
+    with open(get_mimic_raw_stats_path()) as f:
         dataset_statistics = json.load(f)
 
     #: generate from that
@@ -315,7 +335,7 @@ def mapping_file_generation():
 
     # make into df
     df = pd.DataFrame(rows)
-    df.to_csv("/home/makaron1/uc2_nsclc/2_experiments/2024_02_08_mimic_iv/1_data/0_final_data/column_descriptive_name_mapping.csv")
+    df.to_csv(get_mimic_column_descriptive_mapping_path(), index=False)
 
 
 
@@ -328,24 +348,31 @@ def mapping_file_generator_nr_tokens_estimated():
     print("Starting with mapping_file_generator_nr_tokens_estimated")
 
 
-    from transformers import LlamaTokenizer
+    from transformers import AutoTokenizer
     import pandas as pd
     import numpy as np
 
+    ensure_runtime_cache_env()
 
+    original_column_mapping = pd.read_csv(get_mimic_column_descriptive_mapping_path())
 
-    original_column_mapping = pd.read_csv("/home/makaron1/uc2_nsclc/2_experiments/2024_02_08_mimic_iv/1_data/0_final_data/column_descriptive_name_mapping.csv")
-
-    tokenizer = LlamaTokenizer.from_pretrained("NousResearch/Llama-2-7b-hf", truncation_side="left")
+    tokenizer = AutoTokenizer.from_pretrained(get_tokenizer_model_path(), truncation_side="left")
 
 
     new_column_mapping = original_column_mapping.copy()
+    descriptive_column = "descriptive_column_name"
+
+    if descriptive_column not in new_column_mapping.columns:
+        raise KeyError(
+            f"Expected '{descriptive_column}' in {get_mimic_column_descriptive_mapping_path()}, "
+            f"got columns={list(new_column_mapping.columns)}"
+        )
 
     new_column = []
 
     for idx in range(new_column_mapping.shape[0]):
 
-        curr_column_descriptive_name = new_column_mapping.iloc[idx, 3]
+        curr_column_descriptive_name = new_column_mapping.loc[idx, descriptive_column]
 
         tokens = tokenizer(text=curr_column_descriptive_name)["input_ids"]
         nr_tokens = len(tokens) - 1  # -1 since there is end of line
@@ -358,7 +385,7 @@ def mapping_file_generator_nr_tokens_estimated():
     new_column_mapping = new_column_mapping.drop(['Unnamed: 0', 'X.2', 'X.1', 'X'], axis=1, errors="ignore")
 
     # save
-    new_column_mapping.to_csv("/home/makaron1/uc2_nsclc/2_experiments/2024_02_08_mimic_iv/1_data/0_final_data/column_descriptive_name_mapping.csv")
+    new_column_mapping.to_csv(get_mimic_column_descriptive_mapping_path(), index=False)
 
 
 
@@ -381,7 +408,7 @@ def duplicate_naming_increment():
     import pandas as pd
     import numpy as np
 
-    original_column_mapping = pd.read_csv("/home/makaron1/uc2_nsclc/2_experiments/2024_02_08_mimic_iv/1_data/0_final_data/column_descriptive_name_mapping.csv")
+    original_column_mapping = pd.read_csv(get_mimic_column_descriptive_mapping_path())
 
     # Create a new column that enumerates the duplicates
     counts = original_column_mapping.groupby('descriptive_column_name').cumcount() + 1
@@ -401,7 +428,7 @@ def duplicate_naming_increment():
     new_column_mapping = original_column_mapping.drop(['Unnamed: 0', 'X.2', 'X.1', 'X'], axis=1, errors="ignore")
 
     # save
-    new_column_mapping.to_csv("/home/makaron1/uc2_nsclc/2_experiments/2024_02_08_mimic_iv/1_data/0_final_data/column_descriptive_name_mapping.csv")
+    new_column_mapping.to_csv(get_mimic_column_descriptive_mapping_path(), index=False)
 
     print("Finished MAKING DUPLICATED DESCRIPTIVE NAMING WITH NUMBERS")
 
@@ -432,6 +459,3 @@ if __name__ == "__main__":
     make_random_patient_subsets()
     duplicate_naming_increment()
     mapping_file_generator_nr_tokens_estimated()
-
-
-

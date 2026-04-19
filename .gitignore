@@ -11,3 +11,12 @@
 *.txt
 *.egg-info*
 
+# log
+*.out
+*.err
+
+# raw data
+/mimic-iv-clinical-database-demo-data
+
+# results
+/3_results

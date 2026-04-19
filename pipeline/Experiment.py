@@ -16,13 +16,14 @@ import os
 from IPython.display import display
 from transformers import set_seed, DataCollatorWithPadding
 from pipeline.ArchivedFunctions import OldExperiment
+from pipeline.local_paths import get_default_experiment_output_root, repo_root
 import warnings
 
 
 class Experiment:
 
     def __init__(self, experiment_name, experiment_class_name=None,  nickname=None, 
-                    experiment_folder_root = "/pstore/data/dt-gpt/raw_experiments/uc2_nsclc/",
+                    experiment_folder_root=None,
                     timestamp_to_use=None):
         
         if experiment_class_name is None:
@@ -31,12 +32,16 @@ class Experiment:
         if nickname is None:
             nickname = experiment_name
 
+        if experiment_folder_root is None:
+            experiment_folder_root = get_default_experiment_output_root()
+
         # Do checks
         assert experiment_folder_root is not None, "Experiment: experiment_folder_root is None! This has to be set to a valid path."
         assert experiment_class_name is not None, "Experiment: experiment_class_name is None! This has to be set to a valid path."
         assert nickname is not None, "Experiment: nickname is None! This has to be set to a valid name that helps you later remember this exact run."
 
         # Assign Variables
+
         self._experiment_folder_root = experiment_folder_root
         self._experiment_class_name = experiment_class_name
         self._experiment_name = experiment_name
@@ -51,7 +56,7 @@ class Experiment:
         self._setup_logging()
 
         # Some constants
-        self.base_path = os.path.dirname(__file__).split("/DT-GPT")[0] + "/DT-GPT/"  # Hacky way to get the base path
+        self.base_path = str(repo_root()) + "/"
         self.model_cache_path = self.base_path + "3_cache/"
 
 
@@ -677,9 +682,6 @@ class Experiment:
 
 
     
-
-
-
 
 
 

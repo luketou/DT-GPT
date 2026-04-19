@@ -7,6 +7,7 @@ import logging
 import math
 from pandas.api.types import is_datetime64_any_dtype as is_datetime
 import os
+from pipeline.local_paths import repo_root
 
 
 class EvaluationManager:
@@ -20,7 +21,7 @@ class EvaluationManager:
         if base_path is not None:
             self.base_path = base_path
         else:
-            self.base_path = os.path.dirname(__file__).split("/DT-GPT")[0] + "/DT-GPT/"  # Hacky way to get the base path
+            self.base_path = str(repo_root()) + "/"
 
         self._datasets_available = {
             "2023_11_07_neutrophils" : {
@@ -439,6 +440,5 @@ class EvaluationManager:
 
         # do assertions that is ok
         assert set(self.column_mapping_known_future_input_col_names).isdisjoint(self.column_mapping_input_target_col_names), "Evaluation Manager: known future inputs and target cols intersect!"
-
 
 

@@ -4,7 +4,22 @@ import os
 import json
 from collections import Counter
 import time
+import sys
+from pathlib import Path
 import wandb
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from pipeline.local_paths import (
+    ensure_directory,
+    get_mimic_constants_path,
+    get_mimic_final_data_dir,
+    get_mimic_final_events_dir,
+    get_mimic_raw_events_dir,
+    get_mimic_raw_stats_path,
+)
 
 
 
@@ -15,16 +30,16 @@ def main():
     print("Starting main filtering and processing")
 
     #: go through every csv in the folder, open as csv, then note down stats for non-zero/non-na values
-    load_folder_path = "/home/makaron1/uc2_nsclc/2_experiments/2024_02_08_mimic_iv/1_data/1_preprocessing/1_raw_events/csv"
-    save_folder_path = "/home/makaron1/uc2_nsclc/2_experiments/2024_02_08_mimic_iv/1_data/0_final_data/events"
-    save_folder_path_constant = "/home/makaron1/uc2_nsclc/2_experiments/2024_02_08_mimic_iv/1_data/0_final_data"
+    load_folder_path = get_mimic_raw_events_dir()
+    save_folder_path = ensure_directory(get_mimic_final_events_dir())
+    save_folder_path_constant = ensure_directory(get_mimic_final_data_dir())
 
     # get all files in the folder
     files = [f for f in os.listdir(load_folder_path) if os.path.isdir(os.path.join(load_folder_path, f))]
     files = sorted(files)
 
     #: open stats dic, and select which variables to keep
-    with open('/home/makaron1/uc2_nsclc/2_experiments/2024_02_08_mimic_iv/1_data/1_preprocessing/2024_02_01_raw_data_stats.json') as f:
+    with open(get_mimic_raw_stats_path()) as f:
         stats = json.load(f)
     
     # convert everything to numpy arrays if possible
@@ -143,7 +158,7 @@ def main():
     #: save final constants df
     print("Saving constants df")
     df_constants = pd.concat(constant_list, axis=0, ignore_index=True)
-    df_constants.to_csv(os.path.join(save_folder_path_constant, "constants.csv"), index=False)
+    df_constants.to_csv(get_mimic_constants_path(), index=False)
 
     
     
@@ -151,7 +166,7 @@ def main():
 
 if __name__ == "__main__":
 
-    debug = False
+    debug = os.getenv("WANDB_MODE", "").lower() == "disabled"
 
     #: setup wandb
     if debug:
@@ -160,9 +175,6 @@ if __name__ == "__main__":
         wandb.init(project='UC - MIMIC-IV', group="Data Processing")
 
     main()
-
-
-
 
 
 

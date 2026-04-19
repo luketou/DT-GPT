@@ -13,18 +13,26 @@ import decimal
 from collections.abc import Container
 import numbers
 import logging
-from transformers import LlamaTokenizer
+from transformers import AutoTokenizer
 import os
+from pathlib import Path
 
+from pipeline.local_paths import ensure_runtime_cache_env, get_tokenizer_model_path, repo_root
+
+ensure_runtime_cache_env()
 
 
 class DTGPTDataFrameConverterTemplateTextBasicDescription(DataFrameConverter):
 
-    tokenizer = LlamaTokenizer.from_pretrained("NousResearch/Llama-2-7b-hf", truncation_side="left")
-    base_path = os.path.dirname(__file__).split("/uc2_nsclc")[0] + "/uc2_nsclc/"  # Hacky way to get the base path
-    lot = pd.read_csv(base_path + "2_experiments/2023_11_07_neutrophils/1_data/line_of_therapy.csv")
-    lot['startdate'] = pd.to_datetime(lot['startdate'], errors='coerce')
-    lot = lot.dropna(subset=['startdate'])
+    tokenizer = AutoTokenizer.from_pretrained(get_tokenizer_model_path(), truncation_side="left")
+    base_path = str(repo_root()) + "/"
+    lot_path = Path(base_path) / "1_experiments" / "2023_11_07_neutrophils" / "1_data" / "line_of_therapy.csv"
+    if lot_path.exists():
+        lot = pd.read_csv(lot_path)
+        lot['startdate'] = pd.to_datetime(lot['startdate'], errors='coerce')
+        lot = lot.dropna(subset=['startdate'])
+    else:
+        lot = pd.DataFrame(columns=["patientid", "startdate", "linename", "linenumber"])
 
 
     def _estimate_nr_tokens_per_row(df, column_name_mapping):
@@ -628,8 +636,6 @@ class DTGPTDataFrameConverterTemplateTextBasicDescription(DataFrameConverter):
         
         #: return
         return prediction_df
-
-
 
 
 

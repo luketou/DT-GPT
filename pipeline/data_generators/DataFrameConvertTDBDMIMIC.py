@@ -13,15 +13,17 @@ import decimal
 from collections.abc import Container
 import numbers
 import logging
-from transformers import LlamaTokenizer
+from transformers import AutoTokenizer
 import os
+from pipeline.local_paths import ensure_runtime_cache_env, get_tokenizer_model_path, repo_root
 
+ensure_runtime_cache_env()
 
 
 class DTGPTDataFrameConverterTemplateTextBasicDescriptionMIMIC(DataFrameConverter):
 
-    tokenizer = LlamaTokenizer.from_pretrained("NousResearch/Llama-2-7b-hf", truncation_side="left")
-    base_path = os.path.dirname(__file__).split("/uc2_nsclc")[0] + "/uc2_nsclc/"  # Hacky way to get the base path
+    tokenizer = AutoTokenizer.from_pretrained(get_tokenizer_model_path(), truncation_side="left")
+    base_path = str(repo_root()) + "/"
 
 
     def _estimate_nr_tokens_per_row(df, column_name_mapping):
@@ -632,8 +634,6 @@ class DTGPTDataFrameConverterTemplateTextBasicDescriptionMIMIC(DataFrameConverte
         
         #: return
         return prediction_df
-
-
 
 
 
