@@ -1,6 +1,7 @@
 from pathlib import Path
 
-from peft import LoraConfig, TaskType
+from peft import LoraConfig, PeftModel, TaskType, get_peft_model
+from transformers import AutoModelForCausalLM
 
 
 DEFAULT_MISTRAL_LORA_TARGET_MODULES = (
@@ -34,3 +35,24 @@ def build_mistral_lora_config(
 
 def build_lora_adapter_path(experiment_model_path):
     return str(Path(experiment_model_path) / "fine_tuned_lora_adapter")
+
+
+def apply_lora_to_model(model, lora_config, gradient_checkpointing=False):
+    if gradient_checkpointing and hasattr(model, "enable_input_require_grads"):
+        model.enable_input_require_grads()
+
+    peft_model = get_peft_model(model, lora_config)
+    peft_model.print_trainable_parameters()
+    return peft_model
+
+
+def load_lora_model_for_inference(model_name_or_path, adapter_path, model_load_kwargs):
+    base_model = AutoModelForCausalLM.from_pretrained(
+        model_name_or_path,
+        **model_load_kwargs,
+    )
+    return PeftModel.from_pretrained(
+        base_model,
+        adapter_path,
+        is_trainable=False,
+    )

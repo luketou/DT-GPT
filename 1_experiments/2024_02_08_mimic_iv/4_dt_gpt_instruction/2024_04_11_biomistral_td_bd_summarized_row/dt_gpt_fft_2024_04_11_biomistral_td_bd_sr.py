@@ -32,6 +32,12 @@ from pipeline.local_paths import (
     get_model_load_kwargs,
     get_precision_config,
 )
+from pipeline.lora_helpers import (
+    apply_lora_to_model,
+    build_lora_adapter_path,
+    build_mistral_lora_config,
+    load_lora_model_for_inference,
+)
 
 
 
@@ -48,7 +54,11 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
                 gen_num_beams=1, gen_do_sample=False,
                 eval_model_path=None,
                 num_samples_to_generate=10, sample_merging_strategy="mean",
-                max_new_tokens_to_generate=1200):
+                max_new_tokens_to_generate=1200,
+                use_lora=True,
+                lora_r=16,
+                lora_alpha=32,
+                lora_dropout=0.05):
 
         
         ######################################################## SETUP EXPERIMENT ########################################################
@@ -284,6 +294,18 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
             if gradient_checkpointing:
                 model.config.use_cache = False
 
+            if use_lora:
+                lora_config = build_mistral_lora_config(
+                    r=lora_r,
+                    lora_alpha=lora_alpha,
+                    lora_dropout=lora_dropout,
+                )
+                model = apply_lora_to_model(
+                    model,
+                    lora_config,
+                    gradient_checkpointing=gradient_checkpointing,
+                )
+
             logging.info("Num params in model: " + str(model.num_parameters()))
 
             # Load data collator
@@ -338,8 +360,10 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
             logging.info("Start training")
             trainer.train()
 
-            #: save only adapter
-            finetune_model_path = experiment.model_path + "fine_tuned_full"
+            if use_lora:
+                finetune_model_path = build_lora_adapter_path(experiment.model_path)
+            else:
+                finetune_model_path = experiment.model_path + "fine_tuned_full"
             model.save_pretrained(finetune_model_path)
 
 
@@ -356,26 +380,42 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
             # For better predictions, we reload the model and adapter in 16 bit
             logging.info("Model reload")
 
-            model = AutoModelForCausalLM.from_pretrained(
-                finetune_model_path,
-                **get_model_load_kwargs(
-                    experiment.model_cache_path,
-                    training=False,
-                ),
+            inference_load_kwargs = get_model_load_kwargs(
+                experiment.model_cache_path,
+                training=False,
             )
+            if use_lora:
+                model = load_lora_model_for_inference(
+                    MODEL_HF_NAME,
+                    finetune_model_path,
+                    inference_load_kwargs,
+                )
+            else:
+                model = AutoModelForCausalLM.from_pretrained(
+                    finetune_model_path,
+                    **inference_load_kwargs,
+                )
 
 
         if eval_model_path is not None:
 
             logging.info("Model load from path")
 
-            model = AutoModelForCausalLM.from_pretrained(
-                eval_model_path,
-                **get_model_load_kwargs(
-                    experiment.model_cache_path,
-                    training=False,
-                ),
+            inference_load_kwargs = get_model_load_kwargs(
+                experiment.model_cache_path,
+                training=False,
             )
+            if use_lora:
+                model = load_lora_model_for_inference(
+                    MODEL_HF_NAME,
+                    eval_model_path,
+                    inference_load_kwargs,
+                )
+            else:
+                model = AutoModelForCausalLM.from_pretrained(
+                    eval_model_path,
+                    **inference_load_kwargs,
+                )
 
 
         # Setup data processing for inference

@@ -26,6 +26,12 @@ class LoraHelperTests(unittest.TestCase):
             "/tmp/experiment/fine_tuned_lora_adapter",
         )
 
+    def test_build_mistral_lora_config_supports_overrides(self):
+        config = build_mistral_lora_config(r=8, lora_alpha=16, lora_dropout=0.1)
+        self.assertEqual(config.r, 8)
+        self.assertEqual(config.lora_alpha, 16)
+        self.assertAlmostEqual(config.lora_dropout, 0.1)
+
 
 if __name__ == "__main__":
     unittest.main()
