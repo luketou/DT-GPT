@@ -2,11 +2,40 @@ import unittest
 import warnings
 
 import numpy as np
+import pandas as pd
 
-from pipeline.prediction_aggregation import aggregate_prediction_cube
+from pipeline.prediction_aggregation import (
+    aggregate_prediction_cube,
+    build_prediction_cube,
+)
 
 
 class PredictionAggregationTests(unittest.TestCase):
+    def test_build_prediction_cube_coerces_pandas_na_to_nan(self):
+        prediction_frames = [
+            pd.DataFrame(
+                {
+                    "lab_hr": [80, pd.NA],
+                    "lab_rr": ["18", "19"],
+                }
+            ),
+            pd.DataFrame(
+                {
+                    "lab_hr": ["82", "84"],
+                    "lab_rr": [pd.NA, "21"],
+                }
+            ),
+        ]
+
+        cube = build_prediction_cube(prediction_frames, ["lab_hr", "lab_rr"])
+
+        self.assertEqual(cube.dtype, np.float32)
+        self.assertEqual(cube.shape, (2, 2, 2))
+        self.assertEqual(cube[0, 0, 0], 80.0)
+        self.assertTrue(np.isnan(cube[1, 0, 0]))
+        self.assertTrue(np.isnan(cube[0, 1, 1]))
+        self.assertEqual(cube[1, 1, 1], 21.0)
+
     def test_mean_aggregation_preserves_nan_without_empty_slice_warning(self):
         cube = np.array(
             [

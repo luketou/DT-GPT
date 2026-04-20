@@ -22,7 +22,10 @@ from pipeline.model_device import (
     model_uses_hf_device_map,
 )
 from pipeline.local_paths import get_default_experiment_output_root, repo_root
-from pipeline.prediction_aggregation import aggregate_prediction_cube
+from pipeline.prediction_aggregation import (
+    aggregate_prediction_cube,
+    build_prediction_cube,
+)
 import warnings
 
 
@@ -647,9 +650,10 @@ class Experiment:
                     interesting_samples = [x for x in merging_list]
 
                 #: merge interesting columns target_cols_orginal
-                interesting_df_cols = [np.expand_dims(x[1][target_cols_orginal].values, axis=2) for x in interesting_samples]
-                merged_np = np.concatenate(interesting_df_cols, axis=2)
-                merged_np = merged_np.astype(np.float32)
+                merged_np = build_prediction_cube(
+                    [x[1] for x in interesting_samples],
+                    target_cols_orginal,
+                )
 
                 #: merge using correct strategy
                 aggregated_np = aggregate_prediction_cube(
@@ -693,5 +697,4 @@ class Experiment:
 
 
     
-
 

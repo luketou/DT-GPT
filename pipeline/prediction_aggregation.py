@@ -1,4 +1,23 @@
 import numpy as np
+import pandas as pd
+
+
+def build_prediction_cube(prediction_frames, target_columns):
+    numeric_arrays = []
+
+    for prediction_df in prediction_frames:
+        numeric_df = prediction_df.loc[:, target_columns].apply(
+            pd.to_numeric,
+            errors="coerce",
+        )
+        numeric_arrays.append(
+            np.expand_dims(
+                numeric_df.to_numpy(dtype=np.float32),
+                axis=2,
+            )
+        )
+
+    return np.concatenate(numeric_arrays, axis=2)
 
 
 def aggregate_prediction_cube(prediction_cube, sample_merging_strategy):
