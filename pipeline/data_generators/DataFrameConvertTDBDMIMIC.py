@@ -534,6 +534,67 @@ class DTGPTDataFrameConverterTemplateTextBasicDescriptionMIMIC(DataFrameConverte
         #: return mapping
         return col_mapping
 
+    def _build_empty_prediction_df(
+        all_column_names,
+        all_prediction_days,
+        patientid,
+        patient_sample_index,
+    ):
+        empty_df = pd.DataFrame(
+            index=range(len(all_prediction_days)),
+            columns=all_column_names,
+        )
+        empty_df["date"] = pd.to_datetime(all_prediction_days)
+        empty_df["patientid"] = patientid
+        empty_df["patient_sample_index"] = patient_sample_index
+        empty_df = empty_df.reset_index(drop=True)
+        return empty_df
+
+    def _normalize_prediction_column_lengths(
+        data_as_dic,
+        expected_columns,
+        expected_length,
+        patientid,
+        patient_sample_index,
+    ):
+        normalized = {}
+        mismatches = []
+
+        for column_name in expected_columns:
+            raw_values = data_as_dic.get(column_name, [])
+            if raw_values is None:
+                raw_values = []
+            if not isinstance(raw_values, list):
+                raise ValueError(
+                    "Prediction column "
+                    + str(column_name)
+                    + " for patient "
+                    + str(patientid)
+                    + " sample "
+                    + str(patient_sample_index)
+                    + " did not decode to a JSON list."
+                )
+
+            original_length = len(raw_values)
+            normalized_values = list(raw_values[:expected_length])
+            if len(normalized_values) < expected_length:
+                normalized_values.extend([pd.NA] * (expected_length - len(normalized_values)))
+
+            if original_length != expected_length:
+                mismatches.append((column_name, original_length, expected_length))
+
+            normalized[column_name] = normalized_values
+
+        if len(mismatches) > 0:
+            logging.warning(
+                "Normalized malformed prediction lengths for patient %s sample %s: %s",
+                patientid,
+                patient_sample_index,
+                mismatches,
+            )
+
+        return normalized
+
 
     def convert_from_strings_to_df(column_name_mapping, string_output, all_prediction_days, patientid, patient_sample_index, 
                                    all_column_names, all_unk_columns, prediction_days_column_wise=None):
@@ -542,14 +603,12 @@ class DTGPTDataFrameConverterTemplateTextBasicDescriptionMIMIC(DataFrameConverte
         assert "patientid" in all_column_names and "patient_sample_index" in all_column_names and "date" in all_column_names, "DataFrameConverter: PatientID or patient_sample_index or date not in all_column_names!"
 
         #: in case of errors, send back empty df with patientid & patient_sample_index
-        empty_df = pd.DataFrame(columns=all_column_names)
-        empty_df.loc[0:len(all_prediction_days)] = [None] * len(empty_df.columns)
-        empty_df["date"] = all_prediction_days                            
-        empty_df['date'] = pd.to_datetime(empty_df['date'])
-        empty_df["patientid"] = patientid
-        empty_df["patient_sample_index"] = patient_sample_index
-        empty_df = empty_df.reset_index()
-        empty_df = empty_df.drop(["index"], axis=1, errors="ignore", inplace=False)
+        empty_df = DTGPTDataFrameConverterTemplateTextBasicDescriptionMIMIC._build_empty_prediction_df(
+            all_column_names,
+            all_prediction_days,
+            patientid,
+            patient_sample_index,
+        )
 
 
         #: try to convert from JSON string to dataframe, using orientation 'index'
@@ -557,25 +616,43 @@ class DTGPTDataFrameConverterTemplateTextBasicDescriptionMIMIC(DataFrameConverte
             
             # Convert json string to dic
             data_as_dic = json.loads(string_output)
+            if not isinstance(data_as_dic, dict):
+                raise ValueError("Prediction output must decode to a JSON object.")
 
             #: fill in correct dates with NaNs
             if prediction_days_column_wise is not None:
-                column_wise_date_mapping = prediction_days_column_wise['Variables to predict for respective hours']
+                column_wise_date_mapping = prediction_days_column_wise["Variables to predict for respective hours"]
                 
                 #: first get all possible positions
                 all_positions = sorted(list(set([y for x in column_wise_date_mapping.values() for y in x])))
 
                 for col in column_wise_date_mapping.keys():
-                    
+                    values = list(data_as_dic.get(col, []))
                     positions = column_wise_date_mapping[col]
-                    indices = [all_positions.index(x) for x in positions]
+                    index_lookup = {position: idx for idx, position in enumerate(all_positions)}
+                    expanded_values = [pd.NA] * len(all_positions)
 
-                    for idx in range(len(all_positions)):
-                        if idx not in indices:
-                            data_as_dic[col].insert(idx, np.nan)
-            
+                    for source_idx, position in enumerate(positions):
+                        if source_idx < len(values):
+                            expanded_values[index_lookup[position]] = values[source_idx]
+
+                    data_as_dic[col] = expanded_values
+
+                expected_columns = list(column_wise_date_mapping.keys())
+            else:
+                expected_columns = sorted(list(data_as_dic.keys()))
+
+            data_as_dic = DTGPTDataFrameConverterTemplateTextBasicDescriptionMIMIC._normalize_prediction_column_lengths(
+                data_as_dic,
+                expected_columns,
+                len(all_prediction_days),
+                patientid,
+                patient_sample_index,
+            )
+
             # Convert from dic to DF
-            prediction_df = pd.DataFrame.from_dict(data_as_dic, orient='columns')
+            prediction_df = pd.DataFrame.from_dict(data_as_dic, orient="columns")
+            prediction_df = prediction_df.reindex(range(len(all_prediction_days)))
 
             #: sort by index
             prediction_df.sort_index(inplace=True)
@@ -634,7 +711,6 @@ class DTGPTDataFrameConverterTemplateTextBasicDescriptionMIMIC(DataFrameConverte
         
         #: return
         return prediction_df
-
 
 
 
