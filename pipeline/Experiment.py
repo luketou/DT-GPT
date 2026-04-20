@@ -115,14 +115,11 @@ class Experiment:
         
         log_file_path = self.get_experiment_folder() + "logfile.log"
 
-        logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO,
+        logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.DEBUG,
                             handlers=[
                                 logging.FileHandler(log_file_path),
                                 logging.StreamHandler(sys.stdout)]
                             )
-
-        for logger_name in ("asyncio", "filelock", "urllib3", "git", "wandb"):
-            logging.getLogger(logger_name).setLevel(logging.WARNING)
 
         logging.info("Logger initiated")
     
@@ -685,6 +682,7 @@ class Experiment:
 
 
     
+
 
 
 

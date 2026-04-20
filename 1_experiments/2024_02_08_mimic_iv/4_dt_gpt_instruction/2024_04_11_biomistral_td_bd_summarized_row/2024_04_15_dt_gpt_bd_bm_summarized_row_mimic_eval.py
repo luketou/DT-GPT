@@ -25,11 +25,6 @@ def build_parser():
     parser.add_argument("--seq-max-len", type=int, default=3400)
     parser.add_argument("--num-samples-to-generate", type=int, default=30)
     parser.add_argument("--max-new-tokens-to-generate", type=int, default=900)
-    parser.add_argument(
-        "--verbose-predictions",
-        action="store_true",
-        help="Log raw prompts and decoded prediction strings during evaluation.",
-    )
     return parser
 
 
@@ -40,7 +35,7 @@ def main():
 
     experiment.run(
         debug=args.debug,
-        verbose=args.verbose_predictions,
+        verbose=True,
         wandb_prefix_name="DT-GPT - BioMistral - 3.4k - FFT - TI - BD - SR - EVAL 80 - 30 Samples - Forecast: ",
         wandb_group_name="DT-GPT - BioMistral - FFT - Template Input - Basic Description - Summarized Row",
         train_set="TRAIN",

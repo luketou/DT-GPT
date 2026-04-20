@@ -38,11 +38,6 @@ def build_parser():
     parser.add_argument("--lora-dropout", type=float, default=0.05)
     parser.add_argument("--gradient-checkpointing", action="store_true")
     parser.add_argument("--logging-steps", type=int, default=10)
-    parser.add_argument(
-        "--verbose-predictions",
-        action="store_true",
-        help="Log raw prompts and decoded prediction strings during evaluation.",
-    )
     return parser
 
 
@@ -53,7 +48,7 @@ def main():
 
     experiment.run(
         debug=args.debug,
-        verbose=args.verbose_predictions,
+        verbose=True,
         wandb_prefix_name="DT-GPT - BioMistral - 3.4k - FFT - TI - BD - SR - 30 Samples - Forecast: ",
         wandb_group_name="DT-GPT - BioMistral - FFT - Template Input - Basic Description - Summarized Row",
         train_set="TRAIN",
