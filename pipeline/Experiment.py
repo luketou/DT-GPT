@@ -16,6 +16,11 @@ import os
 from IPython.display import display
 from transformers import set_seed, DataCollatorWithPadding
 from pipeline.ArchivedFunctions import OldExperiment
+from pipeline.batch_metadata import normalize_batch_metadata_values
+from pipeline.model_device import (
+    get_generation_input_device,
+    model_uses_hf_device_map,
+)
 from pipeline.local_paths import get_default_experiment_output_root, repo_root
 import warnings
 
@@ -367,14 +372,17 @@ class Experiment:
         assert self.model is not None, "Model needs to be initialized for HF eval!"
         set_seed(42)
 
-        # Using standard model forward - as long as the model fits into 1 gpu its fine
-
-        # Send model to gpu
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        
         self.model.eval()
-        self.model.to(device)
-        logging.info("Sending model to device: " + str(device))
+        if model_uses_hf_device_map(self.model):
+            device = get_generation_input_device(self.model)
+            logging.info(
+                "Using HF device-mapped model for generation; inputs will be sent to device: "
+                + str(device)
+            )
+        else:
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            self.model.to(device)
+            logging.info("Sending model to device: " + str(device))
 
         # Init eval manager for streaming
         eval_manager.evaluate_split_stream_start()
@@ -504,8 +512,12 @@ class Experiment:
             logging.info("Batch starting with index: " + str(curr_index + 1) + " / " + str(len(input_data)))
             
             #: get sample id
-            patientids = input_sample_ids_patient[batch["labels"]]
-            patient_sample_indices = input_sample_ids_sample[batch["labels"]]
+            patientids = normalize_batch_metadata_values(
+                input_sample_ids_patient[batch["labels"]]
+            )
+            patient_sample_indices = normalize_batch_metadata_values(
+                input_sample_ids_sample[batch["labels"]]
+            )
 
             #: batch send to device
             input_ids = batch['input_ids'].to(device)
@@ -549,8 +561,8 @@ class Experiment:
             #: save in temp dic for merging for each individual sample
             for prediction_idx, prediction_str in enumerate(predictions_decoded):
 
-                curr_patientid = patientids[prediction_idx] if not isinstance(patientids, str) else patientids
-                curr_patient_sample_index = patient_sample_indices[prediction_idx] if not isinstance(patient_sample_indices, str) else patient_sample_indices
+                curr_patientid = patientids[prediction_idx]
+                curr_patient_sample_index = patient_sample_indices[prediction_idx]
 
                 output_saving[curr_patientid][curr_patient_sample_index]["generated_predictions"].append(prediction_str)
 
@@ -682,8 +694,6 @@ class Experiment:
 
 
     
-
-
 
 
 
