@@ -22,6 +22,7 @@ from pipeline.model_device import (
     model_uses_hf_device_map,
 )
 from pipeline.local_paths import get_default_experiment_output_root, repo_root
+from pipeline.prediction_aggregation import aggregate_prediction_cube
 import warnings
 
 
@@ -651,12 +652,10 @@ class Experiment:
                 merged_np = merged_np.astype(np.float32)
 
                 #: merge using correct strategy
-                if sample_merging_strategy == "mean":
-                    aggregated_np = np.nanmean(merged_np, axis=2, keepdims=False)
-                elif sample_merging_strategy == "50th percentile":
-                    aggregated_np = np.percentile(merged_np, 50, axis=2, keepdims=False)
-                else:
-                    raise Exception("Experiment: unknown sample_merging_strategy provided!")
+                aggregated_np = aggregate_prediction_cube(
+                    merged_np,
+                    sample_merging_strategy,
+                )
 
                 #: insert back into final dataframe
                 final_df = merging_list[0][1].copy()
@@ -694,6 +693,5 @@ class Experiment:
 
 
     
-
 
 
