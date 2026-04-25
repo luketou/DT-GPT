@@ -58,7 +58,8 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
                 use_lora=True,
                 lora_r=16,
                 lora_alpha=32,
-                lora_dropout=0.05):
+                lora_dropout=0.05,
+                use_dora=False):
 
         
         ######################################################## SETUP EXPERIMENT ########################################################
@@ -299,6 +300,7 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
                     r=lora_r,
                     lora_alpha=lora_alpha,
                     lora_dropout=lora_dropout,
+                    use_dora=use_dora,
                 )
                 model = apply_lora_to_model(
                     model,

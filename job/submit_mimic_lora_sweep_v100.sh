@@ -1,13 +1,13 @@
 #!/bin/bash
-#SBATCH --job-name="dtgpt-mimic-lora-sweep"
+#SBATCH --job-name="dtgpt-mimic-dora-sweep"
 #SBATCH --partition=v100-32g
 #SBATCH --account=v100-32g
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=3
 #SBATCH --gres=gpu:3
 #SBATCH --time=3-0:0
-#SBATCH --output=logs/mimic_lora_sweep_%j.out
-#SBATCH --error=logs/mimic_lora_sweep_%j.err
+#SBATCH --output=logs/mimic_dora_sweep_%j.out
+#SBATCH --error=logs/mimic_dora_sweep_%j.err
 #SBATCH --chdir=/share/home/r15543056/trajectory_forecast/DT-GPT
 ###SBATCH --test-only
 
@@ -61,9 +61,11 @@ TRAIN_SCRIPT="1_experiments/2024_02_08_mimic_iv/4_dt_gpt_instruction/2024_04_11_
 SMOKE_CHECK_SCRIPT="1_experiments/2024_02_08_mimic_iv/4_dt_gpt_instruction/2024_04_11_biomistral_td_bd_summarized_row/smoke_check_mimic_local_setup.py"
 
 DEFAULT_SWEEP_CONFIGS=(
-    "16,32,8,8,1e-5"
-    "32,64,8,8,1e-5"
-    "64,128,8,8,1e-5"
+    "32,64,16,10,8e-6"
+    "32,64,16,10,9e-6"
+    "32,64,16,9,1e-5"
+    "32,64,16,11,1e-5"
+    "32,64,16,9,8e-6"
     "32,64,16,10,1e-5"
 )
 
@@ -91,6 +93,7 @@ echo "MIMIC data root: ${DTGPT_MIMIC_DATA_ROOT}"
 echo "MIMIC raw events dir: ${DTGPT_MIMIC_RAW_EVENTS_DIR}"
 echo "MIMIC raw stats path: ${DTGPT_MIMIC_RAW_STATS_PATH}"
 echo "Python binary: ${PYTHON_BIN}"
+echo "Training mode: DoRA"
 echo "Total sweep configurations: ${#SWEEP_CONFIGS[@]}"
 
 "${PYTHON_BIN}" "${SMOKE_CHECK_SCRIPT}"
@@ -113,6 +116,7 @@ for raw_config in "${SWEEP_CONFIGS[@]}"; do
 
     if ! "${PYTHON_BIN}" "${TRAIN_SCRIPT}" \
         --use-lora \
+        --use-dora \
         --lora-r "${lora_r}" \
         --lora-alpha "${lora_alpha}" \
         --lora-dropout "${LORA_DROPOUT}" \
@@ -135,7 +139,7 @@ for raw_config in "${SWEEP_CONFIGS[@]}"; do
     print_header "Finished ${run_label}"
 done
 
-print_header "Completed all ${#SWEEP_CONFIGS[@]} LoRA sweep runs"
+print_header "Completed all ${#SWEEP_CONFIGS[@]} DoRA sweep runs"
 
 if command -v sbatch_post.sh >/dev/null 2>&1; then
     sbatch_post.sh

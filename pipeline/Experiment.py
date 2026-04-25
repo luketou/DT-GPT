@@ -201,9 +201,12 @@ class Experiment:
             outfile.write(json_object)
         wandb.config.update({name + "_resulting_performances" : meta_path}, allow_val_change=True)
 
-        # first flatten try the dictionary resulting_performances, then print all entries in the dictionary resulting_performances which contain "overall" in the key, as a pandas dataframe
+        # Print aggregate overall metrics and per-variable MAE for quick test-log inspection.
         try:
-            resulting_performances_df = pd.json_normalize(resulting_performances, sep='_').filter(regex='all.*overall', axis=1)
+            resulting_performances_df = pd.json_normalize(resulting_performances, sep='_')
+            aggregate_overall_cols = resulting_performances_df.filter(regex='all.*overall', axis=1)
+            per_variable_mae_cols = resulting_performances_df.filter(regex='^(?!.*all).*_mae_overall$', axis=1)
+            resulting_performances_df = pd.concat([aggregate_overall_cols, per_variable_mae_cols], axis=1)
             resulting_performances_df = resulting_performances_df.T
             resulting_performances_df.columns = ["Value"]
             resulting_performances_df.index = resulting_performances_df.index.str.replace('_', ' ')
@@ -697,4 +700,3 @@ class Experiment:
 
 
     
-

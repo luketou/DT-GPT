@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from pipeline.lora_helpers import (
     DEFAULT_MISTRAL_LORA_TARGET_MODULES,
@@ -31,6 +32,20 @@ class LoraHelperTests(unittest.TestCase):
         self.assertEqual(config.r, 8)
         self.assertEqual(config.lora_alpha, 16)
         self.assertAlmostEqual(config.lora_dropout, 0.1)
+
+    def test_build_mistral_lora_config_can_enable_dora(self):
+        captured_kwargs = {}
+
+        class FakeLoraConfig:
+            def __init__(self, use_dora=False, **kwargs):
+                captured_kwargs.update(kwargs)
+                captured_kwargs["use_dora"] = use_dora
+                self.target_modules = kwargs["target_modules"]
+
+        with patch("pipeline.lora_helpers.LoraConfig", FakeLoraConfig):
+            build_mistral_lora_config(use_dora=True)
+
+        self.assertIs(captured_kwargs["use_dora"], True)
 
 
 if __name__ == "__main__":

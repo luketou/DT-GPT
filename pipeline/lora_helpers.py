@@ -1,4 +1,5 @@
 from pathlib import Path
+import inspect
 
 from peft import LoraConfig, PeftModel, TaskType, get_peft_model
 from transformers import AutoModelForCausalLM
@@ -20,15 +21,25 @@ def build_mistral_lora_config(
     lora_alpha=32,
     lora_dropout=0.05,
     target_modules=DEFAULT_MISTRAL_LORA_TARGET_MODULES,
+    use_dora=False,
 ):
-    config = LoraConfig(
-        r=r,
-        lora_alpha=lora_alpha,
-        lora_dropout=lora_dropout,
-        bias="none",
-        task_type=TaskType.CAUSAL_LM,
-        target_modules=list(target_modules),
-    )
+    config_kwargs = {
+        "r": r,
+        "lora_alpha": lora_alpha,
+        "lora_dropout": lora_dropout,
+        "bias": "none",
+        "task_type": TaskType.CAUSAL_LM,
+        "target_modules": list(target_modules),
+    }
+    if use_dora:
+        if "use_dora" not in inspect.signature(LoraConfig).parameters:
+            raise RuntimeError(
+                "DoRA requires a PEFT version whose LoraConfig supports use_dora. "
+                "Upgrade peft before running with --use-dora."
+            )
+        config_kwargs["use_dora"] = True
+
+    config = LoraConfig(**config_kwargs)
     config.target_modules = list(target_modules)
     return config
 

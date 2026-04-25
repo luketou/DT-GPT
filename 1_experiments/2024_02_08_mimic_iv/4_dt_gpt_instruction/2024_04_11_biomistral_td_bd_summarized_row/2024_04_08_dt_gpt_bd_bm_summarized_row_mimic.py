@@ -36,6 +36,7 @@ def build_parser():
     parser.add_argument("--lora-r", type=int, default=16)
     parser.add_argument("--lora-alpha", type=int, default=32)
     parser.add_argument("--lora-dropout", type=float, default=0.05)
+    parser.add_argument("--use-dora", action="store_true")
     parser.add_argument("--gradient-checkpointing", action="store_true")
     parser.add_argument("--logging-steps", type=int, default=10)
     return parser
@@ -71,10 +72,11 @@ def main():
         num_samples_to_generate=args.num_samples_to_generate,
         sample_merging_strategy=args.sample_merging_strategy,
         max_new_tokens_to_generate=args.max_new_tokens_to_generate,
-        use_lora=args.use_lora,
+        use_lora=args.use_lora or args.use_dora,
         lora_r=args.lora_r,
         lora_alpha=args.lora_alpha,
         lora_dropout=args.lora_dropout,
+        use_dora=args.use_dora,
     )
 
 

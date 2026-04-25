@@ -53,6 +53,7 @@ def main():
     top_k_diagnoses = 100
     top_k_procedures = 50
     top_k_output_events = 50
+    paper_target_columns = ["220635", "220210", "220277"]
 
     key_labs = "chartevents"
     key_outputevents = "outputevents"
@@ -98,6 +99,22 @@ def main():
 
         if key in zero_to_na_mapping:
             all_cols_to_convert_zeros_to_na.extend(col_names)
+
+    # Always keep the paper target variables even if they fall outside the
+    # frequency-based top-k cutoff, e.g. magnesium (220635) ranks below top 50.
+    for col in paper_target_columns:
+        if col not in stats:
+            raise KeyError(f"Target column {col} was not found in raw MIMIC statistics.")
+
+        if stats[col]["linksto"] == key_diagnoses:
+            if col not in all_cols_to_keep_static:
+                all_cols_to_keep_static.append(col)
+        else:
+            if col not in all_cols_to_keep_dynamic:
+                all_cols_to_keep_dynamic.append(col)
+
+        if stats[col]["linksto"] in zero_to_na_mapping and col not in all_cols_to_convert_zeros_to_na:
+            all_cols_to_convert_zeros_to_na.append(col)
 
 
     time_since_last_batch = time.time()
@@ -175,6 +192,5 @@ if __name__ == "__main__":
         wandb.init(project='UC - MIMIC-IV', group="Data Processing")
 
     main()
-
 
 
