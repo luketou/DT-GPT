@@ -19,13 +19,17 @@ if command -v sbatch_pre.sh >/dev/null 2>&1; then
     sbatch_pre.sh
 fi
 
-module load cuda/12.1
+if command -v module >/dev/null 2>&1; then
+    module purge || true
+    module load cuda/12.1
+fi
 
 export TOKENIZERS_PARALLELISM=false
 export DTGPT_BIOMISTRAL_MODEL_PATH="${DTGPT_BIOMISTRAL_MODEL_PATH:-/home/r15543056/llm_model/BioMistral-7B-DARE}"
 export DTGPT_TOKENIZER_MODEL_PATH="${DTGPT_TOKENIZER_MODEL_PATH:-/home/r15543056/llm_model/BioMistral-7B-DARE}"
 export DTGPT_EXPERIMENT_ROOT="${DTGPT_EXPERIMENT_ROOT:-/share/home/r15543056/trajectory_forecast/DT-GPT/3_results/raw_experiments/DT-GPT}"
 export DTGPT_RUNTIME_CACHE_ROOT="${DTGPT_RUNTIME_CACHE_ROOT:-/tmp/dtgpt_runtime_cache}"
+export DTGPT_RUN_TIMESTAMP="${DTGPT_RUN_TIMESTAMP:-$(date '+%Y_%m_%d___%H_%M_%S_%6N')}"
 export DTGPT_MIMIC_DATA_ROOT="${DTGPT_MIMIC_DATA_ROOT:-/share/home/r15543056/trajectory_forecast/DT-GPT/1_experiments/2024_02_08_mimic_iv/1_data}"
 export DTGPT_MIMIC_RAW_EVENTS_DIR="${DTGPT_MIMIC_RAW_EVENTS_DIR:-${DTGPT_MIMIC_DATA_ROOT}/1_preprocessing/1_raw_events/csv}"
 export DTGPT_MIMIC_RAW_STATS_PATH="${DTGPT_MIMIC_RAW_STATS_PATH:-${DTGPT_MIMIC_DATA_ROOT}/1_preprocessing/2024_02_01_raw_data_stats.json}"
@@ -46,6 +50,21 @@ else
     PYTHON_BIN="${DTGPT_PYTHON_BIN:-python3}"
 fi
 
+# Keep torch distributed on the NCCL runtime bundled with the active Python env.
+# A mismatched system libnccl can fail at torch.distributed.barrier() during
+# SFTTrainer setup with "Invalid config blocking attribute value".
+TORCH_NCCL_LIB_DIR="$("${PYTHON_BIN}" -c "import pathlib, sys; p = pathlib.Path(sys.prefix) / 'lib' / f'python{sys.version_info.major}.{sys.version_info.minor}' / 'site-packages' / 'nvidia' / 'nccl' / 'lib'; print(p if p.is_dir() else '')")"
+if [ -n "${TORCH_NCCL_LIB_DIR}" ]; then
+    export LD_LIBRARY_PATH="${TORCH_NCCL_LIB_DIR}:${LD_LIBRARY_PATH:-}"
+fi
+unset NCCL_COMM_BLOCKING
+unset NCCL_BLOCKING_WAIT
+unset TORCH_NCCL_BLOCKING_WAIT
+export CUDA_DEVICE_ORDER="${CUDA_DEVICE_ORDER:-PCI_BUS_ID}"
+export NCCL_DEBUG="${NCCL_DEBUG:-INFO}"
+export NCCL_ASYNC_ERROR_HANDLING="${NCCL_ASYNC_ERROR_HANDLING:-1}"
+export TORCH_DISTRIBUTED_DEBUG="${TORCH_DISTRIBUTED_DEBUG:-DETAIL}"
+
 # These defaults remain conservative for V100-32GB hardware.
 SEQ_MAX_LEN="${DTGPT_SEQ_MAX_LEN:-2048}"
 VALIDATION_BATCH_SIZE="${DTGPT_VALIDATION_BATCH_SIZE:-1}"
@@ -56,9 +75,15 @@ LORA_DROPOUT="${DTGPT_LORA_DROPOUT:-0.05}"
 DECIMAL_PRECISION="${DTGPT_DECIMAL_PRECISION:-1}"
 LOGGING_STEPS="${DTGPT_LOGGING_STEPS:-10}"
 SAMPLE_MERGING_STRATEGY="${DTGPT_SAMPLE_MERGING_STRATEGY:-mean}"
+USE_DEEPSPEED="${DTGPT_USE_DEEPSPEED:-1}"
+NPROC_PER_NODE="${DTGPT_NPROC_PER_NODE:-3}"
+DEEPSPEED_CONFIG="${DTGPT_DEEPSPEED_CONFIG:-job/deepspeed_zero3_config.json}"
 
 TRAIN_SCRIPT="1_experiments/2024_02_08_mimic_iv/4_dt_gpt_instruction/2024_04_11_biomistral_td_bd_summarized_row/2024_04_08_dt_gpt_bd_bm_summarized_row_mimic.py"
 SMOKE_CHECK_SCRIPT="1_experiments/2024_02_08_mimic_iv/4_dt_gpt_instruction/2024_04_11_biomistral_td_bd_summarized_row/smoke_check_mimic_local_setup.py"
+DISTRIBUTED_SMOKE_CHECK_SCRIPT="job/check_torch_distributed_nccl.py"
+RUN_DISTRIBUTED_SMOKE_CHECK="${DTGPT_RUN_DISTRIBUTED_SMOKE_CHECK:-1}"
+SFT_DATASET_NUM_PROC="${DTGPT_SFT_DATASET_NUM_PROC:-1}"
 
 DEFAULT_SWEEP_CONFIGS=(
     "32,64,16,10,8e-6"
@@ -94,7 +119,21 @@ echo "MIMIC raw events dir: ${DTGPT_MIMIC_RAW_EVENTS_DIR}"
 echo "MIMIC raw stats path: ${DTGPT_MIMIC_RAW_STATS_PATH}"
 echo "Python binary: ${PYTHON_BIN}"
 echo "Training mode: DoRA"
+echo "Run timestamp: ${DTGPT_RUN_TIMESTAMP}"
+echo "SFT dataset num proc: ${SFT_DATASET_NUM_PROC}"
+echo "Distributed smoke check: ${RUN_DISTRIBUTED_SMOKE_CHECK}"
+if [ "${USE_DEEPSPEED}" = "1" ]; then
+    echo "Distributed training: DeepSpeed ZeRO-3 (${NPROC_PER_NODE} processes)"
+    echo "DeepSpeed config: ${DEEPSPEED_CONFIG}"
+else
+    echo "Distributed training: disabled"
+fi
 echo "Total sweep configurations: ${#SWEEP_CONFIGS[@]}"
+
+if [ "${USE_DEEPSPEED}" = "1" ] && [ "${RUN_DISTRIBUTED_SMOKE_CHECK}" = "1" ]; then
+    print_header "Running NCCL distributed smoke check"
+    "${PYTHON_BIN}" -m torch.distributed.run --nproc_per_node "${NPROC_PER_NODE}" "${DISTRIBUTED_SMOKE_CHECK_SCRIPT}"
+fi
 
 "${PYTHON_BIN}" "${SMOKE_CHECK_SCRIPT}"
 
@@ -114,9 +153,17 @@ for raw_config in "${SWEEP_CONFIGS[@]}"; do
     run_label="run ${run_index}/${#SWEEP_CONFIGS[@]} | r=${lora_r} alpha=${lora_alpha} grad_acc=${gradient_accumulation} epochs=${num_train_epochs} lr=${learning_rate}"
     print_header "Starting ${run_label}"
 
-    if ! "${PYTHON_BIN}" "${TRAIN_SCRIPT}" \
+    DEEPSPEED_FLAG=()
+    RUNNER=("${PYTHON_BIN}")
+    if [ "${USE_DEEPSPEED}" = "1" ]; then
+        DEEPSPEED_FLAG=(--deepspeed-config "${DEEPSPEED_CONFIG}")
+        RUNNER=("${PYTHON_BIN}" -m torch.distributed.run --nproc_per_node "${NPROC_PER_NODE}")
+    fi
+
+    if ! "${RUNNER[@]}" "${TRAIN_SCRIPT}" \
         --use-lora \
         --use-dora \
+        "${DEEPSPEED_FLAG[@]}" \
         --lora-r "${lora_r}" \
         --lora-alpha "${lora_alpha}" \
         --lora-dropout "${LORA_DROPOUT}" \
@@ -131,7 +178,8 @@ for raw_config in "${SWEEP_CONFIGS[@]}"; do
         --num-samples-to-generate "${NUM_SAMPLES_TO_GENERATE}" \
         --sample-merging-strategy "${SAMPLE_MERGING_STRATEGY}" \
         --max-new-tokens-to-generate "${MAX_NEW_TOKENS}" \
-        --logging-steps "${LOGGING_STEPS}"; then
+        --logging-steps "${LOGGING_STEPS}" \
+        --sft-dataset-num-proc "${SFT_DATASET_NUM_PROC}"; then
         print_header "Failed ${run_label}"
         exit 1
     fi
