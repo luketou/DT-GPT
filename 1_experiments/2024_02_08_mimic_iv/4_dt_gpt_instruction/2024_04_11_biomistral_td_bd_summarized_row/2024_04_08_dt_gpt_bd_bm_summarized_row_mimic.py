@@ -39,6 +39,14 @@ def build_parser():
     parser.add_argument("--use-dora", action="store_true")
     parser.add_argument("--gradient-checkpointing", action="store_true")
     parser.add_argument("--logging-steps", type=int, default=10)
+    parser.add_argument(
+        "--sft-dataset-num-proc",
+        type=int,
+        default=1,
+        help="Number of processes TRL should use for SFT dataset preprocessing.",
+    )
+    parser.add_argument("--deepspeed-config", type=str, default=None)
+    parser.add_argument("--local-rank", "--local_rank", type=int, default=-1)
     return parser
 
 
@@ -66,6 +74,7 @@ def main():
         lr_scheduler="cosine",
         gradient_checkpointing=args.gradient_checkpointing,
         logging_steps=args.logging_steps,
+        sft_dataset_num_proc=args.sft_dataset_num_proc,
         nr_days_forecasting=91,
         seq_max_len_in_tokens=args.seq_max_len,
         decimal_precision=args.decimal_precision,
@@ -77,6 +86,7 @@ def main():
         lora_alpha=args.lora_alpha,
         lora_dropout=args.lora_dropout,
         use_dora=args.use_dora,
+        deepspeed_config=args.deepspeed_config,
     )
 
 

@@ -23,6 +23,7 @@ from pipeline.NormalizationFilterManager import Only_Double3_sigma_Filtering
 from pipeline.MetricManager import MetricManager
 from trl import SFTTrainer
 import json
+import inspect
 from pipeline.Splitters import After24HSplitter
 from pipeline.NormalizationFilterManager import Only_Standardization
 from pipeline.local_paths import (
@@ -59,7 +60,9 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
                 lora_r=16,
                 lora_alpha=32,
                 lora_dropout=0.05,
-                use_dora=False):
+                use_dora=False,
+                deepspeed_config=None,
+                sft_dataset_num_proc=1):
 
         
         ######################################################## SETUP EXPERIMENT ########################################################
@@ -330,6 +333,7 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
                 weight_decay=WEIGHT_DECAY,
                 fp16=precision_config["fp16"],
                 bf16=precision_config["bf16"],
+                deepspeed=deepspeed_config,
                 num_train_epochs=NUM_TRAIN_EPOCHS,
                 warmup_ratio=WARMUP_RATIO,
                 group_by_length=True,
@@ -343,6 +347,10 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
             )
 
 
+            sft_trainer_kwargs = {}
+            if "dataset_num_proc" in inspect.signature(SFTTrainer).parameters:
+                sft_trainer_kwargs["dataset_num_proc"] = sft_dataset_num_proc
+
             trainer = SFTTrainer(
                 model=model,
                 train_dataset=training_dataset,
@@ -353,6 +361,7 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
                 args=train_params,
                 packing=False,
                 dataset_text_field="concatenated_text",
+                **sft_trainer_kwargs,
             )
             
                             
