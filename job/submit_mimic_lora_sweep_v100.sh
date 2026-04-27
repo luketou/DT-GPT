@@ -77,6 +77,7 @@ LORA_DROPOUT="${DTGPT_LORA_DROPOUT:-0.05}"
 DECIMAL_PRECISION="${DTGPT_DECIMAL_PRECISION:-1}"
 LOGGING_STEPS="${DTGPT_LOGGING_STEPS:-10}"
 SAMPLE_MERGING_STRATEGY="${DTGPT_SAMPLE_MERGING_STRATEGY:-mean}"
+USE_DORA="${DTGPT_USE_DORA:-0}"
 USE_DEEPSPEED="${DTGPT_USE_DEEPSPEED:-1}"
 NPROC_PER_NODE="${DTGPT_NPROC_PER_NODE:-3}"
 DEEPSPEED_CONFIG="${DTGPT_DEEPSPEED_CONFIG:-job/deepspeed_zero3_config.json}"
@@ -120,7 +121,11 @@ echo "MIMIC data root: ${DTGPT_MIMIC_DATA_ROOT}"
 echo "MIMIC raw events dir: ${DTGPT_MIMIC_RAW_EVENTS_DIR}"
 echo "MIMIC raw stats path: ${DTGPT_MIMIC_RAW_STATS_PATH}"
 echo "Python binary: ${PYTHON_BIN}"
-echo "Training mode: DoRA"
+if [ "${USE_DORA}" = "1" ]; then
+    echo "Training mode: DoRA"
+else
+    echo "Training mode: LoRA"
+fi
 echo "Run timestamp: ${DTGPT_RUN_TIMESTAMP}"
 echo "SFT dataset num proc: ${SFT_DATASET_NUM_PROC}"
 echo "Distributed smoke check: ${RUN_DISTRIBUTED_SMOKE_CHECK}"
@@ -156,7 +161,11 @@ for raw_config in "${SWEEP_CONFIGS[@]}"; do
     print_header "Starting ${run_label}"
 
     DEEPSPEED_FLAG=()
+    DORA_FLAG=()
     RUNNER=("${PYTHON_BIN}")
+    if [ "${USE_DORA}" = "1" ]; then
+        DORA_FLAG=(--use-dora)
+    fi
     if [ "${USE_DEEPSPEED}" = "1" ]; then
         DEEPSPEED_FLAG=(--deepspeed-config "${DEEPSPEED_CONFIG}")
         RUNNER=("${PYTHON_BIN}" -m torch.distributed.run --nproc_per_node "${NPROC_PER_NODE}")
@@ -164,7 +173,7 @@ for raw_config in "${SWEEP_CONFIGS[@]}"; do
 
     if ! "${RUNNER[@]}" "${TRAIN_SCRIPT}" \
         --use-lora \
-        --use-dora \
+        "${DORA_FLAG[@]}" \
         "${DEEPSPEED_FLAG[@]}" \
         --lora-r "${lora_r}" \
         --lora-alpha "${lora_alpha}" \
