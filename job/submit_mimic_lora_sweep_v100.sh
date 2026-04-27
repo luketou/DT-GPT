@@ -13,6 +13,8 @@
 
 set -euo pipefail
 
+cd "${SLURM_SUBMIT_DIR:-$(pwd)}"
+
 mkdir -p logs
 
 if command -v sbatch_pre.sh >/dev/null 2>&1; then
