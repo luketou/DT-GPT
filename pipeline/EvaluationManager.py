@@ -7,7 +7,7 @@ import logging
 import math
 from pandas.api.types import is_datetime64_any_dtype as is_datetime
 import os
-from pipeline.local_paths import repo_root
+from pipeline.local_paths import get_mimic_final_data_dir, repo_root
 
 
 class EvaluationManager:
@@ -22,6 +22,7 @@ class EvaluationManager:
             self.base_path = base_path
         else:
             self.base_path = str(repo_root()) + "/"
+        mimic_final_data_dir = str(get_mimic_final_data_dir()) + "/"
 
         self._datasets_available = {
             "2023_11_07_neutrophils" : {
@@ -86,26 +87,26 @@ class EvaluationManager:
             },
 
             "2024_03_15_mimic_iv" : {
-                "path_constant": self.base_path + "1_experiments/2024_02_08_mimic_iv/1_data/0_final_data/constants.csv",
-                "path_to_events_folder" : self.base_path + "1_experiments/2024_02_08_mimic_iv/1_data/0_final_data/events/",
-                "path_to_column_mapping_file": self.base_path + "1_experiments/2024_02_08_mimic_iv/1_data/0_final_data/column_mapping.json",
+                "path_constant": mimic_final_data_dir + "constants.csv",
+                "path_to_events_folder" : mimic_final_data_dir + "events/",
+                "path_to_column_mapping_file": mimic_final_data_dir + "column_mapping.json",
                 "path_to_dataset_cache": self.base_path + "3_cache",
                 "patientid_splits": {
-                    "2024_03_15_1k_train" : self.base_path + "1_experiments/2024_02_08_mimic_iv/1_data/0_final_data/patient_subsets/2024_03_15_1k_train.json",
-                    "2024_03_15_100_validation" : self.base_path + "1_experiments/2024_02_08_mimic_iv/1_data/0_final_data/patient_subsets/2024_03_15_100_validation.json",
-                    "2024_03_15_100_test": self.base_path + "1_experiments/2024_02_08_mimic_iv/1_data/0_final_data/patient_subsets/2024_03_15_100_test.json",
-                    "2024_06_17_randomized_1_train" : self.base_path + "1_experiments/2024_02_08_mimic_iv/1_data/0_final_data/patient_subsets/2024_06_17_randomized_1_training.json",
-                    "2024_06_17_randomized_1_validation" : self.base_path + "1_experiments/2024_02_08_mimic_iv/1_data/0_final_data/patient_subsets/2024_06_17_randomized_1_validation.json",
-                    "2024_06_17_randomized_1_test": self.base_path + "1_experiments/2024_02_08_mimic_iv/1_data/0_final_data/patient_subsets/2024_06_17_randomized_1_test.json",
-                    "2024_06_17_randomized_2_train" : self.base_path + "1_experiments/2024_02_08_mimic_iv/1_data/0_final_data/patient_subsets/2024_06_17_randomized_2_training.json",
-                    "2024_06_17_randomized_2_validation" : self.base_path + "1_experiments/2024_02_08_mimic_iv/1_data/0_final_data/patient_subsets/2024_06_17_randomized_2_validation.json",
-                    "2024_06_17_randomized_2_test": self.base_path + "1_experiments/2024_02_08_mimic_iv/1_data/0_final_data/patient_subsets/2024_06_17_randomized_2_test.json",
+                    "2024_03_15_1k_train" : mimic_final_data_dir + "patient_subsets/2024_03_15_1k_train.json",
+                    "2024_03_15_100_validation" : mimic_final_data_dir + "patient_subsets/2024_03_15_100_validation.json",
+                    "2024_03_15_100_test": mimic_final_data_dir + "patient_subsets/2024_03_15_100_test.json",
+                    "2024_06_17_randomized_1_train" : mimic_final_data_dir + "patient_subsets/2024_06_17_randomized_1_training.json",
+                    "2024_06_17_randomized_1_validation" : mimic_final_data_dir + "patient_subsets/2024_06_17_randomized_1_validation.json",
+                    "2024_06_17_randomized_1_test": mimic_final_data_dir + "patient_subsets/2024_06_17_randomized_1_test.json",
+                    "2024_06_17_randomized_2_train" : mimic_final_data_dir + "patient_subsets/2024_06_17_randomized_2_training.json",
+                    "2024_06_17_randomized_2_validation" : mimic_final_data_dir + "patient_subsets/2024_06_17_randomized_2_validation.json",
+                    "2024_06_17_randomized_2_test": mimic_final_data_dir + "patient_subsets/2024_06_17_randomized_2_test.json",
                 },
                 "TRAIN": {
                     "input_output_splitting": None,
                     "skip_patient_event_dataset_cache" : True,
                     "path_to_majority_row": "",
-                    "path_to_statistics_json": self.base_path + "1_experiments/2024_02_08_mimic_iv/1_data/0_final_data/dataset_statistics.json",
+                    "path_to_statistics_json": mimic_final_data_dir + "dataset_statistics.json",
                 },
                 "VALIDATION": {
                     "input_output_splitting": "",
@@ -440,5 +441,4 @@ class EvaluationManager:
 
         # do assertions that is ok
         assert set(self.column_mapping_known_future_input_col_names).isdisjoint(self.column_mapping_input_target_col_names), "Evaluation Manager: known future inputs and target cols intersect!"
-
 
