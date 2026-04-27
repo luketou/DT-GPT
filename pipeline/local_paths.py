@@ -3,7 +3,9 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MIMIC_EXPERIMENT_DIR = REPO_ROOT / "1_experiments" / "2024_02_08_mimic_iv"
-MIMIC_DATA_DIR = MIMIC_EXPERIMENT_DIR / "1_data"
+MIMIC_DATA_DIR = Path(
+    os.getenv("DTGPT_MIMIC_DATA_ROOT", str(MIMIC_EXPERIMENT_DIR / "1_data"))
+).expanduser().resolve()
 MIMIC_PREPROCESSING_DIR = MIMIC_DATA_DIR / "1_preprocessing"
 MIMIC_POSTPROCESS_DIR = MIMIC_DATA_DIR / "2_data_setup"
 MIMIC_FINAL_DATA_DIR = MIMIC_DATA_DIR / "0_final_data"
