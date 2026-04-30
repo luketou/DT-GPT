@@ -563,7 +563,7 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
                                                                                         verbose=verbose,
                                                                                         gen_top_p=0.9,
                                                                                         gen_do_sample=True,
-                                                                                        max_new_tokens=None,
+                                                                                        max_new_tokens=max_new_tokens_to_generate,
                                                                                         num_samples_to_generate=num_samples_to_generate, 
                                                                                         sample_merging_strategy=sample_merging_strategy,
                                                                                         pad_token_id=dp.tokenizer.eos_token_id,
