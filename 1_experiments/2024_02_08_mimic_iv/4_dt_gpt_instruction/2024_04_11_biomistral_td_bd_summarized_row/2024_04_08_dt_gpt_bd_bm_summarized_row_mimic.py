@@ -37,6 +37,9 @@ def build_parser():
     parser.add_argument("--lora-alpha", type=int, default=32)
     parser.add_argument("--lora-dropout", type=float, default=0.05)
     parser.add_argument("--use-dora", action="store_true")
+    parser.add_argument("--use-unsloth", action="store_true",
+                        help="Use Unsloth for optimized 4-bit QLoRA+DoRA training. "
+                             "Implies --use-lora and --use-dora.")
     parser.add_argument("--gradient-checkpointing", action="store_true")
     parser.add_argument("--logging-steps", type=int, default=10)
     parser.add_argument(
@@ -81,11 +84,12 @@ def main():
         num_samples_to_generate=args.num_samples_to_generate,
         sample_merging_strategy=args.sample_merging_strategy,
         max_new_tokens_to_generate=args.max_new_tokens_to_generate,
-        use_lora=args.use_lora or args.use_dora,
+        use_lora=args.use_lora or args.use_dora or args.use_unsloth,
         lora_r=args.lora_r,
         lora_alpha=args.lora_alpha,
         lora_dropout=args.lora_dropout,
-        use_dora=args.use_dora,
+        use_dora=args.use_dora or args.use_unsloth,
+        use_unsloth=args.use_unsloth,
         deepspeed_config=args.deepspeed_config,
     )
 

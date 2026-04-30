@@ -1,4 +1,5 @@
 import __init__
+import os
 import sys
 from pathlib import Path
 
@@ -32,6 +33,7 @@ from pipeline.local_paths import (
     get_mimic_dataset_statistics_path,
     get_model_load_kwargs,
     get_precision_config,
+    get_torch_dtype,
 )
 from pipeline.lora_helpers import (
     apply_lora_to_model,
@@ -61,6 +63,7 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
                 lora_alpha=32,
                 lora_dropout=0.05,
                 use_dora=False,
+                use_unsloth=False,
                 deepspeed_config=None,
                 sft_dataset_num_proc=1):
 
@@ -72,6 +75,9 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
         MODEL_HF_NAME = get_biomistral_model_path()
         DECIMAL_PRECISION = decimal_precision
         precision_config = get_precision_config(training=True)
+        rank = int(os.environ.get("RANK", "0"))
+        is_distributed = int(os.environ.get("WORLD_SIZE", "1")) > 1
+        is_main_process = rank == 0
 
         # Setup hyperparameters
         LEARNING_RATE = learning_rate                # From meditron paper (pretraining setting)
@@ -89,14 +95,16 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
 
         eval_manager = EvaluationManager("2024_03_15_mimic_iv")
 
-        experiment = Experiment("setup")
+        experiment = Experiment(
+            "setup",
+            timestamp_to_use=os.environ.get("DTGPT_RUN_TIMESTAMP"),
+        )
 
         # Uncomment for debug mode of WandB
         if debug:
             experiment.setup_wandb_debug_mode()
-        else:
+        elif is_main_process:
             experiment.setup_wandb(wandb_prefix_name + str(MIN_NR_DAYS_FORECAST) + " LR: " + str(learning_rate), wandb_group_name, project="UC - MIMIC-IV")
-            
             wandb.config.update({"generation_config": { "gen_num_beams": gen_num_beams,
                                     "gen_do_sample": gen_do_sample}}, 
                                     allow_val_change=True)
@@ -284,45 +292,63 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
 
             logging.info("Setting up model")
 
-            model_load_kwargs = get_model_load_kwargs(
-                experiment.model_cache_path,
-                training=True,
-            )
-            
-            # Load in Meditron
-            model = AutoModelForCausalLM.from_pretrained(
-                MODEL_HF_NAME,
-                **model_load_kwargs,
-            )
-
-            if gradient_checkpointing:
-                model.config.use_cache = False
-
-            if use_lora:
-                lora_config = build_mistral_lora_config(
+            if use_unsloth:
+                from pipeline.unsloth_helpers import load_model_unsloth, apply_unsloth_peft
+                model, _unsloth_tokenizer = load_model_unsloth(
+                    MODEL_HF_NAME,
+                    max_seq_length=SEQUENCE_MAX_LENGTH_IN_TOKENS,
+                    load_in_4bit=True,
+                    dtype=get_torch_dtype(precision_config["torch_dtype_name"]),
+                )
+                model = apply_unsloth_peft(
+                    model,
                     r=lora_r,
                     lora_alpha=lora_alpha,
                     lora_dropout=lora_dropout,
                     use_dora=use_dora,
+                    use_gradient_checkpointing=gradient_checkpointing,
                 )
-                model = apply_lora_to_model(
-                    model,
-                    lora_config,
-                    gradient_checkpointing=gradient_checkpointing,
+            else:
+                model_load_kwargs = get_model_load_kwargs(
+                    experiment.model_cache_path,
+                    training=True,
                 )
+
+                # Load in Meditron
+                model = AutoModelForCausalLM.from_pretrained(
+                    MODEL_HF_NAME,
+                    **model_load_kwargs,
+                )
+
+                if gradient_checkpointing:
+                    model.config.use_cache = False
+
+                if use_lora:
+                    lora_config = build_mistral_lora_config(
+                        r=lora_r,
+                        lora_alpha=lora_alpha,
+                        lora_dropout=lora_dropout,
+                        use_dora=use_dora,
+                    )
+                    model = apply_lora_to_model(
+                        model,
+                        lora_config,
+                        gradient_checkpointing=gradient_checkpointing,
+                    )
 
             logging.info("Num params in model: " + str(model.num_parameters()))
 
             # Load data collator
             data_collator = dp.get_collator(model)
 
-            
+
             train_params = TrainingArguments(
                 output_dir=experiment.model_path,
                 per_device_train_batch_size=BATCH_SIZE_TRAINING,
                 per_device_eval_batch_size=BATCH_SIZE_TRAINING,
                 gradient_accumulation_steps=GRADIENT_ACCUMULATION,
                 gradient_checkpointing=gradient_checkpointing,
+                gradient_checkpointing_kwargs={"use_reentrant": False} if gradient_checkpointing else None,
                 optim="adamw_torch",
                 evaluation_strategy="steps",
                 save_strategy="steps",
@@ -334,6 +360,7 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
                 fp16=precision_config["fp16"],
                 bf16=precision_config["bf16"],
                 deepspeed=deepspeed_config,
+                ddp_find_unused_parameters=False if is_distributed and use_unsloth else None,
                 num_train_epochs=NUM_TRAIN_EPOCHS,
                 warmup_ratio=WARMUP_RATIO,
                 group_by_length=True,
@@ -341,7 +368,7 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
                 lr_scheduler_kwargs={},     
                 push_to_hub=False,
                 save_total_limit=2,
-                report_to="wandb",
+                report_to="wandb" if is_main_process else "none",
                 load_best_model_at_end=True,
                 seed=42,
             )
@@ -375,7 +402,25 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
                 finetune_model_path = build_lora_adapter_path(experiment.model_path)
             else:
                 finetune_model_path = experiment.model_path + "fine_tuned_full"
-            model.save_pretrained(finetune_model_path)
+
+            if deepspeed_config and use_lora and not use_unsloth:
+                trainer.save_model(finetune_model_path)
+            elif is_main_process:
+                if use_unsloth:
+                    from pipeline.unsloth_helpers import save_unsloth_model
+                    save_unsloth_model(model, dp.tokenizer, finetune_model_path)
+                elif use_lora:
+                    model.save_pretrained(finetune_model_path)
+                else:
+                    model.save_pretrained(finetune_model_path)
+
+            if is_distributed:
+                torch.distributed.barrier()
+                if not is_main_process:
+                    return
+
+            if not is_main_process:
+                return
 
 
             # Clear GPU memory
@@ -391,42 +436,58 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
             # For better predictions, we reload the model and adapter in 16 bit
             logging.info("Model reload")
 
-            inference_load_kwargs = get_model_load_kwargs(
-                experiment.model_cache_path,
-                training=False,
-            )
-            if use_lora:
-                model = load_lora_model_for_inference(
+            if use_unsloth:
+                from pipeline.unsloth_helpers import load_unsloth_model_for_inference
+                model, _unsloth_tokenizer = load_unsloth_model_for_inference(
                     MODEL_HF_NAME,
                     finetune_model_path,
-                    inference_load_kwargs,
+                    max_seq_length=SEQUENCE_MAX_LENGTH_IN_TOKENS,
                 )
             else:
-                model = AutoModelForCausalLM.from_pretrained(
-                    finetune_model_path,
-                    **inference_load_kwargs,
+                inference_load_kwargs = get_model_load_kwargs(
+                    experiment.model_cache_path,
+                    training=False,
                 )
+                if use_lora:
+                    model = load_lora_model_for_inference(
+                        MODEL_HF_NAME,
+                        finetune_model_path,
+                        inference_load_kwargs,
+                    )
+                else:
+                    model = AutoModelForCausalLM.from_pretrained(
+                        finetune_model_path,
+                        **inference_load_kwargs,
+                    )
 
 
         if eval_model_path is not None:
 
             logging.info("Model load from path")
 
-            inference_load_kwargs = get_model_load_kwargs(
-                experiment.model_cache_path,
-                training=False,
-            )
-            if use_lora:
-                model = load_lora_model_for_inference(
+            if use_unsloth:
+                from pipeline.unsloth_helpers import load_unsloth_model_for_inference
+                model, _unsloth_tokenizer = load_unsloth_model_for_inference(
                     MODEL_HF_NAME,
                     eval_model_path,
-                    inference_load_kwargs,
+                    max_seq_length=SEQUENCE_MAX_LENGTH_IN_TOKENS,
                 )
             else:
-                model = AutoModelForCausalLM.from_pretrained(
-                    eval_model_path,
-                    **inference_load_kwargs,
+                inference_load_kwargs = get_model_load_kwargs(
+                    experiment.model_cache_path,
+                    training=False,
                 )
+                if use_lora:
+                    model = load_lora_model_for_inference(
+                        MODEL_HF_NAME,
+                        eval_model_path,
+                        inference_load_kwargs,
+                    )
+                else:
+                    model = AutoModelForCausalLM.from_pretrained(
+                        eval_model_path,
+                        **inference_load_kwargs,
+                    )
 
 
         # Setup data processing for inference

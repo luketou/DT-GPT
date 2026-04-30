@@ -22,14 +22,14 @@ def _load_demo_tables(base_dir):
     hosp_dir = base_dir / "hosp"
 
     tables = {
-        "icustays": pd.read_csv(icu_dir / "icustays.csv.gz"),
-        "patients": pd.read_csv(hosp_dir / "patients.csv.gz"),
-        "admissions": pd.read_csv(hosp_dir / "admissions.csv.gz"),
-        "diagnoses": pd.read_csv(hosp_dir / "diagnoses_icd.csv.gz"),
-        "chartevents": pd.read_csv(icu_dir / "chartevents.csv.gz", usecols=["stay_id", "charttime", "itemid", "valuenum"]),
-        "inputevents": pd.read_csv(icu_dir / "inputevents.csv.gz", usecols=["stay_id", "starttime", "itemid", "amount"]),
-        "outputevents": pd.read_csv(icu_dir / "outputevents.csv.gz", usecols=["stay_id", "charttime", "itemid", "value"]),
-        "procedureevents": pd.read_csv(icu_dir / "procedureevents.csv.gz", usecols=["stay_id", "starttime", "itemid", "value"]),
+        "icustays": pd.read_csv(icu_dir / "icustays.csv"),
+        "patients": pd.read_csv(hosp_dir / "patients.csv"),
+        "admissions": pd.read_csv(hosp_dir / "admissions.csv"),
+        "diagnoses": pd.read_csv(hosp_dir / "diagnoses_icd.csv"),
+        "chartevents": pd.read_csv(icu_dir / "chartevents.csv", usecols=["stay_id", "charttime", "itemid", "valuenum"]),
+        "inputevents": pd.read_csv(icu_dir / "inputevents.csv", usecols=["stay_id", "starttime", "itemid", "amount"]),
+        "outputevents": pd.read_csv(icu_dir / "outputevents.csv", usecols=["stay_id", "charttime", "itemid", "value"]),
+        "procedureevents": pd.read_csv(icu_dir / "procedureevents.csv", usecols=["stay_id", "starttime", "itemid", "value"]),
     }
 
     tables["icustays"]["intime"] = pd.to_datetime(tables["icustays"]["intime"])

@@ -163,13 +163,12 @@ def ensure_runtime_cache_env(env=None):
     mpl_config = ensure_directory(cache_root / "matplotlib")
 
     env.setdefault("HF_HOME", str(hf_home))
-    env.setdefault("TRANSFORMERS_CACHE", str(hf_home / "transformers"))
+    env.pop("TRANSFORMERS_CACHE", None)
     env.setdefault("TRITON_CACHE_DIR", str(triton_cache))
     env.setdefault("MPLCONFIGDIR", str(mpl_config))
 
     return {
         "HF_HOME": env["HF_HOME"],
-        "TRANSFORMERS_CACHE": env["TRANSFORMERS_CACHE"],
         "TRITON_CACHE_DIR": env["TRITON_CACHE_DIR"],
         "MPLCONFIGDIR": env["MPLCONFIGDIR"],
     }
@@ -236,13 +235,27 @@ def get_torch_dtype(dtype_name):
     }[dtype_name]
 
 
+def is_unsloth_available():
+    """Return *True* when the ``unsloth`` package is importable."""
+    try:
+        import unsloth  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
 def get_model_load_kwargs(cache_dir, device_map="auto", training=False):
     precision = get_precision_config(training=training)
+    if training and device_map == "auto":
+        device_map = None
+
     kwargs = {
         "cache_dir": cache_dir,
         "torch_dtype": get_torch_dtype(precision["torch_dtype_name"]),
-        "device_map": device_map,
     }
+    if device_map is not None:
+        kwargs["device_map"] = device_map
+
     attn_implementation = precision["attn_implementation"]
     if attn_implementation:
         kwargs["attn_implementation"] = attn_implementation

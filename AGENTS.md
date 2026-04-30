@@ -4,11 +4,10 @@
 `pipeline/` contains the reusable core code: experiment orchestration, evaluation, metrics, splitters, plotting, and dataset-to-text conversion helpers under `pipeline/data_generators/` and `pipeline/data_processors/`. `1_experiments/` holds dataset-specific runs for `critical_vars`, `mimic_iv`, and `adni`; most runnable scripts are date-prefixed, for example `1_experiments/2025_02_03_adni/3_dt_gpt/2025_02_03_dt_gpt_train_full.py`. `2_various_explorations/` is for ad hoc analyses such as zero-shot studies. Treat `mimic-iv-clinical-database-demo-2.2/` as local sample data, not a place for new code.
 
 ## Build, Test, and Development Commands
-Install dependencies in a fresh Python 3.8 environment:
+Test in conda dtgpt environment:
 
 ```bash
-pip install -r requirements.txt
-pip install -e .
+conda activate dtgpt
 ```
 
 Run a specific experiment script directly, for example:
