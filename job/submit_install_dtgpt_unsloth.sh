@@ -49,7 +49,7 @@ if [ ! -f "${REQUIREMENTS_FILE}" ]; then
 fi
 
 "${PYTHON_BIN}" -m pip install --upgrade pip setuptools wheel packaging
-"${PYTHON_BIN}" -m pip install -r "${REQUIREMENTS_FILE}"
+"${PYTHON_BIN}" -m pip install --prefer-binary -r "${REQUIREMENTS_FILE}"
 "${PYTHON_BIN}" -m pip check
 
 "${PYTHON_BIN}" - <<'PY'

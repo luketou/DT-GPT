@@ -19,6 +19,10 @@
 # Core GPU stack used by the current l40s CUDA 12.1 setup.
 torch==2.1.1
 triton==2.1.0
+sympy==1.14.0
+mpmath==1.3.0
+networkx>=3.1
+filelock>=3.10.0
 
 # Unsloth / QLoRA / DoRA training stack.
 # Use the explicit torch/CUDA extra instead of bare `unsloth`; the bare package
@@ -28,10 +32,15 @@ accelerate>=0.27.2
 bitsandbytes>=0.43.0
 datasets>=2.18.0,<3.0.0
 peft>=0.8.2
-transformers>=4.38.2
-trl>=0.7.11
+transformers==4.46.3
+trl==0.12.2
 safetensors>=0.4.2
 sentencepiece>=0.1.99
+typer>=0.12.5,<1.0.0
+click>=8.1.7
+sniffio==1.3.1
+anyio>=4.3.0
+httpx>=0.27.0
 
 # Numeric/data processing used by pipeline and MIMIC conversion/evaluation.
 numpy>=1.26.0,<2.0.0
@@ -44,16 +53,12 @@ pyarrow>=14.0.0
 evaluate>=0.4.0
 GPUtil==1.4.0
 matplotlib>=3.8.0
-openai>=1.60.2
 plotnine>=0.12.0
 rouge-score>=0.1.2
 seaborn>=0.13.0
 wandb>=0.16.1
 
-# Runtime helpers and notebooks used by local smoke checks / exploration.
-ipykernel>=6.29.0
-ipython>=8.20.0
-jupyter>=1.0.0
+# Runtime helpers used by local smoke checks / exploration.
 packaging>=23.2
 protobuf>=4.25.0
 psutil>=5.9.0
