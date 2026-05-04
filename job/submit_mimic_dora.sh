@@ -5,11 +5,11 @@
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=3
 #SBATCH --gres=gpu:2
-#SBATCH --time=3-0:0
+#SBATCH --time=7-0:0
 #SBATCH --output=logs/mimic_dora_sweep_%j.out
 #SBATCH --error=logs/mimic_dora_sweep_%j.err
 #SBATCH --chdir=/share/home/r15543056/trajectory_forecast/DT-GPT
-###SBATCH --test-only
+
 
 set -euo pipefail
 
@@ -35,6 +35,7 @@ export DTGPT_RUN_TIMESTAMP="${DTGPT_RUN_TIMESTAMP:-$(date '+%Y_%m_%d___%H_%M_%S_
 export DTGPT_MIMIC_DATA_ROOT="${DTGPT_MIMIC_DATA_ROOT:-/share/home/r15543056/trajectory_forecast/DT-GPT/1_experiments/2024_02_08_mimic_iv/1_data}"
 export DTGPT_MIMIC_RAW_EVENTS_DIR="${DTGPT_MIMIC_RAW_EVENTS_DIR:-${DTGPT_MIMIC_DATA_ROOT}/1_preprocessing/1_raw_events/csv}"
 export DTGPT_MIMIC_RAW_STATS_PATH="${DTGPT_MIMIC_RAW_STATS_PATH:-${DTGPT_MIMIC_DATA_ROOT}/1_preprocessing/2024_02_01_raw_data_stats.json}"
+export DTGPT_PATIENT_SPLIT_FRACTION="${DTGPT_PATIENT_SPLIT_FRACTION:-0.5}"
 export HF_HOME="${HF_HOME:-${DTGPT_RUNTIME_CACHE_ROOT}/hf_home}"
 unset TRANSFORMERS_CACHE
 export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-${DTGPT_RUNTIME_CACHE_ROOT}/triton}"
@@ -93,6 +94,7 @@ SMOKE_CHECK_SCRIPT="1_experiments/2024_02_08_mimic_iv/4_dt_gpt_instruction/2024_
 DISTRIBUTED_SMOKE_CHECK_SCRIPT="job/check_torch_distributed_nccl.py"
 RUN_DISTRIBUTED_SMOKE_CHECK="${DTGPT_RUN_DISTRIBUTED_SMOKE_CHECK:-1}"
 SFT_DATASET_NUM_PROC="${DTGPT_SFT_DATASET_NUM_PROC:-1}"
+RUN_SPLIT_SMOKE_CHECK="${DTGPT_RUN_SPLIT_SMOKE_CHECK:-1}"
 
 DEFAULT_SWEEP_CONFIGS=(
     # Format: lora_r,lora_alpha,gradient_accumulation,num_train_epochs,learning_rate
@@ -122,6 +124,7 @@ fi
 echo "MIMIC data root: ${DTGPT_MIMIC_DATA_ROOT}"
 echo "MIMIC raw events dir: ${DTGPT_MIMIC_RAW_EVENTS_DIR}"
 echo "MIMIC raw stats path: ${DTGPT_MIMIC_RAW_STATS_PATH}"
+echo "Patient split fraction: ${DTGPT_PATIENT_SPLIT_FRACTION}"
 echo "Python binary: ${PYTHON_BIN}"
 echo "HF home: ${HF_HOME}"
 echo "Sequence max length: ${SEQ_MAX_LEN}"
@@ -133,6 +136,7 @@ echo "Generation samples per patient: ${NUM_SAMPLES_TO_GENERATE}"
 echo "Generation max new tokens: ${MAX_NEW_TOKENS}"
 echo "LoRA dropout: ${LORA_DROPOUT}"
 echo "Distributed smoke check: ${RUN_DISTRIBUTED_SMOKE_CHECK}"
+echo "Split smoke check: ${RUN_SPLIT_SMOKE_CHECK}"
 if [ "${USE_DISTRIBUTED}" = "1" ]; then
     echo "Distributed launcher: torch.distributed.run (${NPROC_PER_NODE} processes)"
 else
@@ -178,6 +182,11 @@ echo "Total sweep configurations: ${#SWEEP_CONFIGS[@]}"
 if [ "${USE_DISTRIBUTED}" = "1" ] && [ "${RUN_DISTRIBUTED_SMOKE_CHECK}" = "1" ]; then
     print_header "Running NCCL distributed smoke check"
     "${PYTHON_BIN}" -m torch.distributed.run --nproc_per_node "${NPROC_PER_NODE}" "${DISTRIBUTED_SMOKE_CHECK_SCRIPT}"
+fi
+
+if [ "${RUN_SPLIT_SMOKE_CHECK}" = "1" ]; then
+    print_header "Running MIMIC split smoke check"
+    "${PYTHON_BIN}" -c "from pipeline.EvaluationManager import EvaluationManager; m = EvaluationManager('2024_03_15_mimic_iv', load_statistics_file=False); [print(f'{split}: {len(m.get_paths_to_events_in_split(split)[1])} patient IDs') for split in ['TRAIN', 'VALIDATION', 'TEST']]"
 fi
 
 "${PYTHON_BIN}" "${SMOKE_CHECK_SCRIPT}"

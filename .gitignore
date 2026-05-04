@@ -11,12 +11,18 @@
 *.txt
 *.egg-info*
 
+# backup files
+*.json.backup_*
+*.csv.backup_*
+*.backup_*
+
 # log
 *.out
 *.err
 
 # raw data
 /mimic-iv-clinical-database-demo-data
+/MIMICIV_for方遠_20260429
 
 # results
 /3_results

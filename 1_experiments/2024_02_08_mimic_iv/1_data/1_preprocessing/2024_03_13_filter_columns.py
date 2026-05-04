@@ -2,11 +2,12 @@ import pandas as pd
 import numpy as np
 import os
 import json
-from collections import Counter
 import time
 import sys
+from multiprocessing import Pool
 from pathlib import Path
 import wandb
+from pandas.errors import EmptyDataError, ParserError
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 if str(REPO_ROOT) not in sys.path:
@@ -22,6 +23,105 @@ from pipeline.local_paths import (
 )
 
 
+def read_raw_stay_csv(stay_folder, filename, skiprows):
+    path = Path(stay_folder) / filename
+    try:
+        return pd.read_csv(path, skiprows=skiprows)
+    except (EmptyDataError, FileNotFoundError, ParserError) as exc:
+        print(f"Skipping raw stay {Path(stay_folder).name}: cannot read {path} ({type(exc).__name__}: {exc})")
+        return None
+
+
+def resolve_worker_count(env=None):
+    env = os.environ if env is None else env
+
+    for key in ("DTGPT_MIMIC_NUM_WORKERS", "SLURM_CPUS_PER_TASK"):
+        value = env.get(key)
+        if value:
+            try:
+                return max(1, int(value))
+            except ValueError:
+                print(f"Ignoring invalid {key}={value!r}; expected an integer")
+
+    return max(1, os.cpu_count() or 1)
+
+
+def list_stay_folders(folder_path):
+    return sorted(
+        file
+        for file in os.listdir(folder_path)
+        if os.path.isdir(os.path.join(folder_path, file))
+    )
+
+
+def process_stay_for_final_data(args):
+    (
+        file,
+        load_folder_path,
+        all_cols_to_keep_dynamic,
+        all_cols_to_keep_static,
+        all_cols_to_convert_zeros_to_na,
+    ) = args
+    stay_folder = os.path.join(load_folder_path, file)
+
+    df = read_raw_stay_csv(stay_folder, "dynamic.csv", skiprows=1)
+    df_demographics = read_raw_stay_csv(stay_folder, "demo.csv", skiprows=0)
+    df_static = read_raw_stay_csv(stay_folder, "static.csv", skiprows=1)
+
+    if df is None or df_demographics is None or df_static is None:
+        return None
+
+    df = df[all_cols_to_keep_dynamic].copy()
+
+    zero_columns = set(all_cols_to_convert_zeros_to_na)
+    for column in df.columns:
+        if column in zero_columns:
+            df[column] = df[column].replace(0, np.nan)
+
+    df_static = df_static[all_cols_to_keep_static]
+    df_static = df_static.replace(0, np.nan)
+    df_static = df_static.replace(1.0, "diagnosed")
+    df_static = pd.concat([df_demographics, df_static], axis=1)
+
+    return file, df, df_static
+
+
+def iter_processed_stays(
+    files,
+    load_folder_path,
+    all_cols_to_keep_dynamic,
+    all_cols_to_keep_static,
+    all_cols_to_convert_zeros_to_na,
+    worker_count,
+):
+    tasks = [
+        (
+            file,
+            str(load_folder_path),
+            all_cols_to_keep_dynamic,
+            all_cols_to_keep_static,
+            all_cols_to_convert_zeros_to_na,
+        )
+        for file in files
+    ]
+
+    if worker_count == 1:
+        for idx, task in enumerate(tasks):
+            if idx % 10 == 0:
+                print(f"Processing file {idx} out of {len(files)}")
+            yield process_stay_for_final_data(task)
+        return
+
+    chunksize = max(1, len(tasks) // (worker_count * 8)) if tasks else 1
+    with Pool(processes=worker_count) as pool:
+        for idx, result in enumerate(
+            pool.imap(process_stay_for_final_data, tasks, chunksize=chunksize)
+        ):
+            if idx % 100 == 0:
+                print(f"Processing file {idx} out of {len(files)}")
+            yield result
+
+
 
 def main():
 
@@ -34,9 +134,9 @@ def main():
     save_folder_path = ensure_directory(get_mimic_final_events_dir())
     save_folder_path_constant = ensure_directory(get_mimic_final_data_dir())
 
-    # get all files in the folder
-    files = [f for f in os.listdir(load_folder_path) if os.path.isdir(os.path.join(load_folder_path, f))]
-    files = sorted(files)
+    files = list_stay_folders(load_folder_path)
+    worker_count = resolve_worker_count()
+    print(f"Filtering workers: {worker_count}")
 
     #: open stats dic, and select which variables to keep
     with open(get_mimic_raw_stats_path()) as f:
@@ -116,37 +216,26 @@ def main():
         if stats[col]["linksto"] in zero_to_na_mapping and col not in all_cols_to_convert_zeros_to_na:
             all_cols_to_convert_zeros_to_na.append(col)
 
-
-    time_since_last_batch = time.time()
-
     #: make empty list for constant df 
     constant_list = []
 
-    # go through every file
-    for idx, file in enumerate(files):
+    start_time = time.time()
+    processed_stays = iter_processed_stays(
+        files,
+        load_folder_path,
+        all_cols_to_keep_dynamic,
+        all_cols_to_keep_static,
+        all_cols_to_convert_zeros_to_na,
+        worker_count,
+    )
+    for result in processed_stays:
+        if result is None:
+            continue
 
-        if idx % 10 == 0:
-            delta_time = time.time() - time_since_last_batch
-            print(f"Processing file {idx} out of {len(files)} taking {delta_time} seconds")
-            time_since_last_batch = time.time()
-
-        # open the file as a dataframe
-        df = pd.read_csv(os.path.join(load_folder_path, file, "dynamic.csv"), skiprows=1)
-
-        #: keep only relevant columns
-        df = df[all_cols_to_keep_dynamic]
-
-        # for every column, note down the number of non-zero/non-na values, the variance across time, the variance in the second half
-        for column in df.columns:
-            
-            # check that this is only done for correct columns (e.g. medication)
-            if column in all_cols_to_convert_zeros_to_na:
-
-                #: convert 0s to nans
-                df[column] = df[column].replace(0, np.nan)
+        _file, df, df_static = result
 
         #: add ids to df
-        patientid = idx
+        patientid = len(constant_list)
         df.insert(0, "patientid", patientid)
 
         #: add 48 hours to date as range of datetime objects
@@ -155,22 +244,12 @@ def main():
         #: save df in folder
         df.to_csv(os.path.join(save_folder_path, f"{patientid}_events.csv"))
 
-        #: get demographic + static dfs
-        df_demographics = pd.read_csv(os.path.join(load_folder_path, file, "demo.csv"))
-        df_static = pd.read_csv(os.path.join(load_folder_path, file, "static.csv"), skiprows=1)
-
-        #: select top diagnsoses
-        df_static = df_static[all_cols_to_keep_static]
-        df_static = df_static.replace(0, np.nan)
-        df_static = df_static.replace(1.0, "diagnosed")
-        
-        #: combine with demographic
-        df_static = pd.concat([df_demographics, df_static], axis=1)
         df_static.insert(0, "patientid", patientid)
 
         #: save in constant list
         constant_list.append(df_static)
 
+    print(f"Filtering took {time.time() - start_time:.1f} seconds")
 
     #: save final constants df
     print("Saving constants df")
@@ -192,5 +271,3 @@ if __name__ == "__main__":
         wandb.init(project='UC - MIMIC-IV', group="Data Processing")
 
     main()
-
-

@@ -3,7 +3,7 @@ import unittest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-JOB_SCRIPT = REPO_ROOT / "job" / "submit_mimic_dora_sweep_v100.sh"
+JOB_SCRIPT = REPO_ROOT / "job" / "submit_mimic_dora.sh"
 
 
 class TestMimicDoraJobConfig(unittest.TestCase):
@@ -22,6 +22,18 @@ class TestMimicDoraJobConfig(unittest.TestCase):
         self.assertIn('USE_DORA="${DTGPT_USE_DORA:-1}"', script)
         self.assertIn('USE_UNSLOTH="${DTGPT_USE_UNSLOTH:-1}"', script)
         self.assertIn('GRADIENT_CHECKPOINTING="${DTGPT_GRADIENT_CHECKPOINTING:-1}"', script)
+
+    def test_uses_half_of_each_patient_split_by_default(self):
+        script = JOB_SCRIPT.read_text()
+
+        self.assertIn(
+            'export DTGPT_PATIENT_SPLIT_FRACTION="${DTGPT_PATIENT_SPLIT_FRACTION:-0.5}"',
+            script,
+        )
+        self.assertIn('echo "Patient split fraction: ${DTGPT_PATIENT_SPLIT_FRACTION}"', script)
+        self.assertIn('RUN_SPLIT_SMOKE_CHECK="${DTGPT_RUN_SPLIT_SMOKE_CHECK:-1}"', script)
+        self.assertIn("Running MIMIC split smoke check", script)
+        self.assertIn("EvaluationManager('2024_03_15_mimic_iv', load_statistics_file=False)", script)
 
 
 if __name__ == "__main__":

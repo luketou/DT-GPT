@@ -10,6 +10,38 @@ import os
 from pipeline.local_paths import get_mimic_final_data_dir, repo_root
 
 
+def apply_patient_split_fraction(patientids, split_name):
+    fraction_raw = os.getenv("DTGPT_PATIENT_SPLIT_FRACTION")
+    if fraction_raw in (None, ""):
+        return patientids
+
+    try:
+        fraction = float(fraction_raw)
+    except ValueError as exc:
+        raise ValueError(
+            f"DTGPT_PATIENT_SPLIT_FRACTION must be a number in (0, 1], got {fraction_raw!r}"
+        ) from exc
+
+    if fraction <= 0 or fraction > 1:
+        raise ValueError(
+            f"DTGPT_PATIENT_SPLIT_FRACTION must be in (0, 1], got {fraction_raw!r}"
+        )
+
+    if fraction == 1:
+        return patientids
+
+    patientids_list = patientids.tolist() if hasattr(patientids, "tolist") else list(patientids)
+    limited_count = max(1, int(len(patientids_list) * fraction))
+    logging.info(
+        "Limiting %s split patient IDs from %s to %s using DTGPT_PATIENT_SPLIT_FRACTION=%s",
+        split_name,
+        len(patientids_list),
+        limited_count,
+        fraction_raw,
+    )
+    return patientids_list[:limited_count]
+
+
 class EvaluationManager:
 
     def __init__(self, dataset_name, load_statistics_file=True, base_path=None):
@@ -245,7 +277,7 @@ class EvaluationManager:
         if split_name in self._current_master_constants_table["dataset_split"].unique().tolist():
             # Get patientids in given split
             patientids_split = self._current_master_constants_table.loc[self._current_master_constants_table["dataset_split"] == split_name]["patientid"]
-            return patientids_split
+            return apply_patient_split_fraction(patientids_split, split_name)
         
         # Next check check in patientid_splits
         if split_name in self._datasets_available[self.dataset_name]["patientid_splits"]:
@@ -254,7 +286,7 @@ class EvaluationManager:
             with open(self._datasets_available[self.dataset_name]["patientid_splits"][split_name], "r") as read_file:
                 dic_with_patientids = json.load(read_file)
             
-            return dic_with_patientids["patientids"]
+            return apply_patient_split_fraction(dic_with_patientids["patientids"], split_name)
 
         raise Exception("Eval Manager: split not found!")
     
@@ -441,4 +473,3 @@ class EvaluationManager:
 
         # do assertions that is ok
         assert set(self.column_mapping_known_future_input_col_names).isdisjoint(self.column_mapping_input_target_col_names), "Evaluation Manager: known future inputs and target cols intersect!"
-
