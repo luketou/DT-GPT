@@ -25,6 +25,19 @@ def build_parser():
     parser.add_argument("--seq-max-len", type=int, default=3400)
     parser.add_argument("--num-samples-to-generate", type=int, default=30)
     parser.add_argument("--max-new-tokens-to-generate", type=int, default=900)
+    parser.add_argument("--eval-backend", choices=["hf", "vllm"], default=os.environ.get("DTGPT_EVAL_BACKEND", "vllm"))
+    parser.add_argument("--eval-shard-index", type=int, default=int(os.environ.get("DTGPT_EVAL_SHARD_INDEX", "0")))
+    parser.add_argument("--eval-num-shards", type=int, default=int(os.environ.get("DTGPT_EVAL_NUM_SHARDS", "1")))
+    parser.add_argument("--eval-max-samples", type=int, default=int(os.environ["DTGPT_EVAL_MAX_SAMPLES"]) if os.environ.get("DTGPT_EVAL_MAX_SAMPLES") else None)
+    parser.add_argument("--prediction-url", default=os.environ.get("DTGPT_PREDICTION_URL", "http://127.0.0.1:18101/v1/"))
+    parser.add_argument("--vllm-model-name", default=os.environ.get("DTGPT_VLLM_MODEL_NAME"))
+    parser.add_argument("--max-concurrent-requests", type=int, default=int(os.environ.get("DTGPT_MAX_CONCURRENT_REQUESTS", "16")))
+    parser.add_argument("--vllm-temperature", type=float, default=float(os.environ.get("DTGPT_VLLM_TEMPERATURE", "1.0")))
+    parser.add_argument("--vllm-top-p", type=float, default=float(os.environ.get("DTGPT_VLLM_TOP_P", "0.9")))
+    parser.add_argument("--vllm-total-max-length", type=int, default=int(os.environ.get("DTGPT_VLLM_TOTAL_MAX_LENGTH", "4092")))
+    parser.add_argument("--vllm-dynamic-max-tokens", action="store_true", default=os.environ.get("DTGPT_VLLM_DYNAMIC_MAX_TOKENS", "1") in ["1", "true", "True", "yes", "YES"])
+    parser.add_argument("--vllm-minimum-max-tokens", type=int, default=int(os.environ.get("DTGPT_VLLM_MINIMUM_MAX_TOKENS", "1")))
+    parser.add_argument("--vllm-continue-on-request-error", action="store_true", default=os.environ.get("DTGPT_VLLM_CONTINUE_ON_REQUEST_ERROR", "0") in ["1", "true", "True", "yes", "YES"])
     return parser
 
 
@@ -57,6 +70,19 @@ def main():
         sample_merging_strategy="mean",
         max_new_tokens_to_generate=args.max_new_tokens_to_generate,
         eval_model_path=args.eval_model_path,
+        eval_backend=args.eval_backend,
+        eval_shard_index=args.eval_shard_index,
+        eval_num_shards=args.eval_num_shards,
+        eval_max_samples=args.eval_max_samples,
+        prediction_url=args.prediction_url,
+        vllm_model_name=args.vllm_model_name,
+        max_concurrent_requests=args.max_concurrent_requests,
+        vllm_temperature=args.vllm_temperature,
+        vllm_top_p=args.vllm_top_p,
+        vllm_total_max_length=args.vllm_total_max_length,
+        vllm_dynamic_max_tokens=args.vllm_dynamic_max_tokens,
+        vllm_minimum_max_tokens=args.vllm_minimum_max_tokens,
+        vllm_fail_on_request_error=not args.vllm_continue_on_request_error,
     )
 
 

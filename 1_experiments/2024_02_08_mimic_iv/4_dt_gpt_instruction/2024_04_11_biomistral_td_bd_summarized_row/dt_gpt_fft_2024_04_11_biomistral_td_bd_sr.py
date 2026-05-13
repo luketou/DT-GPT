@@ -41,13 +41,14 @@ from pipeline.lora_helpers import (
     build_mistral_lora_config,
     load_lora_model_for_inference,
 )
+from pipeline.evaluation_shards import shard_suffix, slice_by_shard
 
 
 
 class DTGPT_mimic_biomistral_fft_ti_bd_sr:
 
-    def run(self, debug=False, verbose=True, 
-                wandb_prefix_name="DT-GPT - Meditron FFT - Completion Loss - Forecast: ", 
+    def run(self, debug=False, verbose=True,
+                wandb_prefix_name="DT-GPT - Meditron FFT - Completion Loss - Forecast: ",
                 wandb_group_name="DT-GPT - Meditron FFT - Completion",
                 train_set= "TRAIN", validation_set = "VALIDATION", test_set = "TEST",
                 learning_rate=1e-5, batch_size_training=1, batch_size_validation=1, weight_decay=0.1, gradient_accumulation=1,
@@ -65,11 +66,24 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
                 use_dora=False,
                 use_unsloth=False,
                 deepspeed_config=None,
-                sft_dataset_num_proc=1):
+                sft_dataset_num_proc=1,
+                eval_backend="vllm",
+                eval_shard_index=0,
+                eval_num_shards=1,
+                eval_max_samples=None,
+                prediction_url="http://127.0.0.1:18101/v1/",
+                vllm_model_name=None,
+                max_concurrent_requests=16,
+                vllm_temperature=1.0,
+                vllm_top_p=0.9,
+                vllm_total_max_length=4092,
+                vllm_dynamic_max_tokens=True,
+                vllm_minimum_max_tokens=1,
+                vllm_fail_on_request_error=True):
 
-        
+
         ######################################################## SETUP EXPERIMENT ########################################################
-        
+
         MIN_NR_DAYS_FORECAST = 24   # We want to forecast up to the first visit after this value, or until the start of the next therapy (which ever comes first) - using 91 since it is the closest multiple of 7 to 90 days - often used for meds
         SEQUENCE_MAX_LENGTH_IN_TOKENS = seq_max_len_in_tokens
         MODEL_HF_NAME = get_biomistral_model_path()
@@ -94,6 +108,8 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
 
 
         eval_manager = EvaluationManager("2024_03_15_mimic_iv")
+        if eval_backend not in ["hf", "vllm"]:
+            raise ValueError("eval_backend must be either 'hf' or 'vllm'")
 
         experiment = Experiment(
             "setup",
@@ -106,7 +122,7 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
         elif is_main_process:
             experiment.setup_wandb(wandb_prefix_name + str(MIN_NR_DAYS_FORECAST) + " LR: " + str(learning_rate), wandb_group_name, project="UC - MIMIC-IV")
             wandb.config.update({"generation_config": { "gen_num_beams": gen_num_beams,
-                                    "gen_do_sample": gen_do_sample}}, 
+                                    "gen_do_sample": gen_do_sample}},
                                     allow_val_change=True)
 
 
@@ -124,26 +140,46 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
 
         # Setup splitter object
         splitter = After24HSplitter()
-        
+
         if eval_model_path is None:
             training_events, training_meta_data = splitter.setup_split_indices(training_full_events, eval_manager)
-        
+
         # Setup also validation and test
         validation_events, validation_meta = splitter.setup_split_indices(validation_full_events, eval_manager)
 
         test_events, test_meta = splitter.setup_split_indices(test_full_events, eval_manager)
-        
+        test_events_full_count = len(test_events)
+        test_events, test_meta = slice_by_shard(
+            test_events,
+            test_meta,
+            shard_index=eval_shard_index,
+            num_shards=eval_num_shards,
+        )
+        if eval_max_samples is not None:
+            test_events = test_events[:eval_max_samples]
+            test_meta = test_meta[:eval_max_samples]
+        test_set_output_name = test_set + shard_suffix(eval_shard_index, eval_num_shards)
+        logging.info(
+            "Using eval backend %s; test shard %s/%s contains %s of %s samples; eval_max_samples=%s",
+            eval_backend,
+            eval_shard_index,
+            eval_num_shards,
+            len(test_events),
+            test_events_full_count,
+            eval_max_samples,
+        )
+
         path_to_statistics_file = str(get_mimic_dataset_statistics_path())
         with open(path_to_statistics_file) as f:
             statistics_dic = json.load(f)
-        
+
 
         ######################################################## CONVERT DFS TO STRINGS ########################################################
 
         logging.info("Converting DFs to Strings")
 
         def filtering_rows_rest_budget(df, nr_tokens_budget):
-            
+
 
             #: create summarizing row for every variable for its respective last observed value, and put into it first row
 
@@ -226,7 +262,7 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
 
         if eval_model_path is None:
             # set up all tuples to be used as arguments for the conversion function
-            training_events = [(column_mapping, curr_const_row, true_events_input, true_future_events_input, target_dataframe, filtering_rows_rest_budget, SEQUENCE_MAX_LENGTH_IN_TOKENS, DECIMAL_PRECISION, prompt) 
+            training_events = [(column_mapping, curr_const_row, true_events_input, true_future_events_input, target_dataframe, filtering_rows_rest_budget, SEQUENCE_MAX_LENGTH_IN_TOKENS, DECIMAL_PRECISION, prompt)
                                 for curr_const_row, true_events_input, true_future_events_input, target_dataframe in training_events]
 
 
@@ -234,19 +270,19 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
             training_norm_filter = Only_Double3_sigma_Filtering(path_to_statistics_file)
 
             #: use the same filtering function but apply to training data
-            training_events = [(x[0], x[1], 
-                                    training_norm_filter.normalize_and_filter(x[2].copy(), None, replace_nan_rows=False, replace_missing_in_prediction=False, verbose=False, specific_column_list=["lab_26499_4"])[0], 
-                                    x[3], 
-                                    training_norm_filter.normalize_and_filter(x[4].copy(), None, replace_nan_rows=False, replace_missing_in_prediction=False, verbose=False)[0], 
+            training_events = [(x[0], x[1],
+                                    training_norm_filter.normalize_and_filter(x[2].copy(), None, replace_nan_rows=False, replace_missing_in_prediction=False, verbose=False, specific_column_list=["lab_26499_4"])[0],
+                                    x[3],
+                                    training_norm_filter.normalize_and_filter(x[4].copy(), None, replace_nan_rows=False, replace_missing_in_prediction=False, verbose=False)[0],
                                     x[5], x[6], x[7], x[8], constant_column_mapping) for x in training_events]
 
-            # apply multiprocessing based DF to string conversion to speed up process            
+            # apply multiprocessing based DF to string conversion to speed up process
             training_input_strings, training_target_strings, training_meta_data = process_all_tuples_multiprocessing(training_events, conversion_function)
 
             # Print one example
             logging.info("Example of input: " + training_input_strings[0])
             logging.info("Example of target: " + training_target_strings[0])
-        
+
             logging.info("Example of input: " + training_input_strings[1])
             logging.info("Example of target: " + training_target_strings[1])
 
@@ -256,22 +292,22 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
                                                     for curr_const_row, true_events_input, true_future_events_input, target_dataframe in validation_events]
 
             #: use the same filtering function but apply to training data
-            validation_events_for_tokenization = [(x[0], x[1], 
-                                                        training_norm_filter.normalize_and_filter(x[2].copy(), None, replace_nan_rows=False, replace_missing_in_prediction=False, verbose=False, specific_column_list=["lab_26499_4"])[0], 
-                                                        x[3], 
-                                                        training_norm_filter.normalize_and_filter(x[4].copy(), None, replace_nan_rows=False, replace_missing_in_prediction=False, verbose=False)[0], 
+            validation_events_for_tokenization = [(x[0], x[1],
+                                                        training_norm_filter.normalize_and_filter(x[2].copy(), None, replace_nan_rows=False, replace_missing_in_prediction=False, verbose=False, specific_column_list=["lab_26499_4"])[0],
+                                                        x[3],
+                                                        training_norm_filter.normalize_and_filter(x[4].copy(), None, replace_nan_rows=False, replace_missing_in_prediction=False, verbose=False)[0],
                                                         x[5], x[6], x[7], x[8], constant_column_mapping) for x in validation_events_for_tokenization]
-            
+
             validation_input_strings, validation_target_strings, validation_meta_data = process_all_tuples_multiprocessing(validation_events_for_tokenization, conversion_function)
 
-                
+
         ######################################################## SETUP DATA PROCESSOR ########################################################
 
 
         # Load data processor
         logging.info("Setting up data processor")
 
-        dp = DataProcessorBiomistral(experiment, path_to_statistics_file, column_mapping, 
+        dp = DataProcessorBiomistral(experiment, path_to_statistics_file, column_mapping,
                                     model_to_use=MODEL_HF_NAME, max_total_length=SEQUENCE_MAX_LENGTH_IN_TOKENS,
                                     collator_setting="completion")
         dp.set_converter(DTGPTDataFrameConverterTemplateTextBasicDescriptionMIMIC)
@@ -279,7 +315,7 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
 
         target_cols = eval_manager.get_column_usage()[2]
         dp.setup_cols(target_cols)
-        
+
         if eval_model_path is None:
             tokenize = True
             training_dataset = dp.preprocess_dataset(training_input_strings, training_target_strings, tokenize=tokenize)
@@ -287,7 +323,7 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
             # Tokenize validation dataset
             validation_dataset = dp.preprocess_dataset(validation_input_strings, validation_target_strings, tokenize=tokenize)
 
-            
+
             ######################################################## SETUP MODEL ########################################################
 
             logging.info("Setting up model")
@@ -352,8 +388,8 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
                 optim="adamw_torch",
                 evaluation_strategy="steps",
                 save_strategy="steps",
-                save_steps=EVAL_NUM_STEPS,                         
-                eval_steps=EVAL_NUM_STEPS,                         
+                save_steps=EVAL_NUM_STEPS,
+                eval_steps=EVAL_NUM_STEPS,
                 logging_steps=logging_steps,
                 learning_rate=LEARNING_RATE,
                 weight_decay=WEIGHT_DECAY,
@@ -364,8 +400,8 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
                 num_train_epochs=NUM_TRAIN_EPOCHS,
                 warmup_ratio=WARMUP_RATIO,
                 group_by_length=True,
-                lr_scheduler_type=LR_SCHEDULER_TYPE,    
-                lr_scheduler_kwargs={},     
+                lr_scheduler_type=LR_SCHEDULER_TYPE,
+                lr_scheduler_kwargs={},
                 push_to_hub=False,
                 save_total_limit=2,
                 report_to="wandb" if is_main_process else "none",
@@ -390,8 +426,8 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
                 dataset_text_field="concatenated_text",
                 **sft_trainer_kwargs,
             )
-            
-                            
+
+
             ######################################################## TRAINING ########################################################
 
 
@@ -432,7 +468,7 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
 
             ######################################################## RELOAD MODEL ########################################################
 
-            
+
             # For better predictions, we reload the model and adapter in 16 bit
             logging.info("Model reload")
 
@@ -461,7 +497,7 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
                     )
 
 
-        if eval_model_path is not None:
+        if eval_model_path is not None and eval_backend == "hf":
 
             logging.info("Model load from path")
 
@@ -488,21 +524,24 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
                         eval_model_path,
                         **inference_load_kwargs,
                     )
+        elif eval_model_path is not None and eval_backend == "vllm":
+            logging.info("Skipping local HF model load because eval backend is vllm")
+            model = None
 
 
         # Setup data processing for inference
         dp.set_for_inference()
-        
+
 
         ######################################################## EVALUATION SETUP ########################################################
-        
+
 
         # Setup all pre and post processing functions
         logging.info("Setting up eval")
 
         def preprocessing_function(constants_row, true_events_input, true_future_events_input, target_dataframe, eval_manager):
             #: convert input to string
-            str_input, str_output, meta_data = dp.convert_to_string_single_patient(constants_row, true_events_input, true_future_events_input, 
+            str_input, str_output, meta_data = dp.convert_to_string_single_patient(constants_row, true_events_input, true_future_events_input,
                                                                                     target_dataframe, input_filtering_function=filtering_rows_rest_budget,
                                                                                     prompt=prompt, decimal_precision=DECIMAL_PRECISION,
                                                                                     constant_column_mapping=constant_column_mapping)
@@ -514,7 +553,7 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
 
             #: apply pre-processing
             preprocessed_input_text = dp.preprocess_inputs([input_text])[0]
-            
+
             return preprocessed_input_text
 
 
@@ -551,29 +590,53 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
 
         def evaluate_and_record(eval_set_events, eval_set_name, eval_meta_data, num_samples_to_generate, sample_merging_strategy, batch_size=BATCH_SIZE_VALIDATION):
 
-            #: get targets and predictions
-            eval_targets, eval_prediction, return_meta_data_list = experiment.get_output_for_split_hf_default(eval_set_events, 
-                                                                                        eval_manager, 
-                                                                                        preprocessing_function=preprocessing_function, 
-                                                                                        tokenizer=dp.tokenizer,
-                                                                                        encoding_function=encoding_function, 
-                                                                                        decoding_function=decoding_function, 
-                                                                                        post_processing_function=post_processing_function,
-                                                                                        batch_size=batch_size,
-                                                                                        verbose=verbose,
-                                                                                        gen_top_p=0.9,
-                                                                                        gen_do_sample=True,
-                                                                                        max_new_tokens=max_new_tokens_to_generate,
-                                                                                        num_samples_to_generate=num_samples_to_generate, 
-                                                                                        sample_merging_strategy=sample_merging_strategy,
-                                                                                        pad_token_id=dp.tokenizer.eos_token_id,
-                                                                                        max_output_length=4000,                     # Setting this here due to mistral long context bug, need to check if causes errors
-                                                                                        return_meta_data=True,
-                                                                                        note_down_probabilities=True)
-            
+            if eval_backend == "vllm":
+                eval_targets, eval_prediction, return_meta_data_list = experiment.get_output_for_split_vllm_completions(
+                    eval_set_events,
+                    eval_manager,
+                    preprocessing_function=preprocessing_function,
+                    encoding_function=encoding_function,
+                    post_processing_function=post_processing_function,
+                    verbose=verbose,
+                    max_new_tokens=max_new_tokens_to_generate,
+                    num_samples_to_generate=num_samples_to_generate,
+                    sample_merging_strategy=sample_merging_strategy,
+                    max_output_length=4000,
+                    return_meta_data=True,
+                    prediction_url=prediction_url,
+                    model_name=vllm_model_name or eval_model_path,
+                    max_concurrent_requests=max_concurrent_requests,
+                    temperature=vllm_temperature,
+                    top_p=vllm_top_p,
+                    tokenizer=dp.tokenizer,
+                    total_max_length=vllm_total_max_length,
+                    dynamic_max_tokens=vllm_dynamic_max_tokens,
+                    minimum_max_tokens=vllm_minimum_max_tokens,
+                    fail_on_request_error=vllm_fail_on_request_error,
+                )
+            else:
+                eval_targets, eval_prediction, return_meta_data_list = experiment.get_output_for_split_hf_default(eval_set_events,
+                                                                                            eval_manager,
+                                                                                            preprocessing_function=preprocessing_function,
+                                                                                            tokenizer=dp.tokenizer,
+                                                                                            encoding_function=encoding_function,
+                                                                                            decoding_function=decoding_function,
+                                                                                            post_processing_function=post_processing_function,
+                                                                                            batch_size=batch_size,
+                                                                                            verbose=verbose,
+                                                                                            gen_top_p=0.9,
+                                                                                            gen_do_sample=True,
+                                                                                            max_new_tokens=max_new_tokens_to_generate,
+                                                                                            num_samples_to_generate=num_samples_to_generate,
+                                                                                            sample_merging_strategy=sample_merging_strategy,
+                                                                                            pad_token_id=dp.tokenizer.eos_token_id,
+                                                                                            max_output_length=4000,                     # Setting this here due to mistral long context bug, need to check if causes errors
+                                                                                            return_meta_data=True,
+                                                                                            note_down_probabilities=True)
+
             # Do filtering without standardizing
             eval_targets_filtered, eval_prediction_filtered = only_standardize.normalize_and_filter(eval_targets, eval_prediction)
-            
+
             #: set grouping by therapy
             eval_targets_filtered_with_meta_data = experiment.join_meta_data_to_targets(eval_targets_filtered, eval_meta_data, generated_meta_data=return_meta_data_list)
 
@@ -588,12 +651,12 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
 
             return eval_targets_filtered, eval_prediction_filtered, eval_targets_filtered_with_meta_data
 
-        
-        
+
+
         ######################################################## TEST EVAL ########################################################
-        
+
         logging.info("Test set Eval")
-        test_targets, test_prediction, test_meta_data = evaluate_and_record(test_events, test_set, test_meta, num_samples_to_generate=num_samples_to_generate, sample_merging_strategy=sample_merging_strategy)
+        test_targets, test_prediction, test_meta_data = evaluate_and_record(test_events, test_set_output_name, test_meta, num_samples_to_generate=num_samples_to_generate, sample_merging_strategy=sample_merging_strategy)
 
 
 

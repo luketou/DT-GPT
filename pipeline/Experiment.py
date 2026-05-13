@@ -1,5 +1,6 @@
 from pathlib import Path
 from datetime import datetime
+import asyncio
 import logging
 import sys
 import shutil
@@ -27,6 +28,67 @@ from pipeline.prediction_aggregation import (
     build_prediction_cube,
 )
 import warnings
+
+
+def align_prediction_to_target_shape(predicted_df, target_shape_df, target_cols_orginal):
+    """Keep predictions row-aligned with the evaluated target horizon.
+
+    The returned frame preserves only identifier/date values from the target
+    frame. Target value columns start as missing values so omitted prediction
+    cells cannot accidentally copy ground-truth values into the prediction.
+    """
+    aligned_df = target_shape_df.copy()
+    value_cols = [col for col in target_cols_orginal if col in aligned_df.columns]
+    if value_cols:
+        for col in value_cols:
+            aligned_df[col] = aligned_df[col].astype("object")
+        aligned_df.loc[:, value_cols] = pd.NA
+
+    overlapping_cols = [col for col in value_cols if col in predicted_df.columns]
+    num_rows_to_copy = min(len(aligned_df), len(predicted_df))
+
+    if len(predicted_df) != len(aligned_df):
+        logging.info(
+            "Aligning vLLM prediction rows from "
+            + str(len(predicted_df))
+            + " to target rows "
+            + str(len(aligned_df))
+        )
+
+    if num_rows_to_copy > 0 and overlapping_cols:
+        aligned_df.loc[aligned_df.index[:num_rows_to_copy], overlapping_cols] = (
+            predicted_df.loc[predicted_df.index[:num_rows_to_copy], overlapping_cols].to_numpy()
+        )
+
+    return aligned_df
+
+
+def compute_vllm_max_tokens(
+    prompt,
+    tokenizer,
+    requested_max_new_tokens,
+    total_max_length,
+    dynamic_max_tokens,
+    minimum_max_tokens=1,
+):
+    """Return the vLLM output-token budget for one prompt.
+
+    HF generation in the original DT-GPT eval used a total `max_length`
+    budget. vLLM's OpenAI-compatible completions endpoint instead expects
+    output-only `max_tokens`, so dynamic mode converts total budget to
+    output budget per prompt.
+    """
+    if not dynamic_max_tokens:
+        return int(requested_max_new_tokens)
+
+    if tokenizer is None:
+        raise ValueError("tokenizer is required when dynamic_max_tokens=True")
+
+    tokenized_prompt = tokenizer(prompt, add_special_tokens=False)
+    prompt_token_count = len(tokenized_prompt.input_ids)
+    remaining_tokens = int(total_max_length) - prompt_token_count
+    bounded_remaining_tokens = max(int(minimum_max_tokens), remaining_tokens)
+    return min(int(requested_max_new_tokens), bounded_remaining_tokens)
 
 
 class Experiment:
@@ -695,6 +757,280 @@ class Experiment:
             return full_df_targets, full_df_prediction, return_meta_data_list
         else:
             # Return
+            return full_df_targets, full_df_prediction
+
+    def get_output_for_split_vllm_completions(self, list_of_split_dfs, eval_manager, preprocessing_function,
+                                              post_processing_function, max_output_length,
+                                              encoding_function,
+                                              prediction_url,
+                                              model_name,
+                                              max_concurrent_requests=16,
+                                              temperature=1.0,
+                                              top_p=0.9,
+                                              tokenizer=None,
+                                              total_max_length=4092,
+                                              dynamic_max_tokens=False,
+                                              minimum_max_tokens=1,
+                                              fail_on_request_error=True,
+                                              num_samples_to_generate=1,
+                                              sample_merging_strategy="mean",
+                                              max_new_tokens=None,
+                                              output_string_filtering_function=None,
+                                              return_meta_data=False,
+                                              verbose=False):
+        import urllib.error
+        import urllib.request
+
+        eval_manager.evaluate_split_stream_start()
+
+        inputs_cols, future_known_inputs_cols, target_cols = eval_manager.get_column_usage()
+        target_cols_orginal = target_cols.copy()
+        target_cols = target_cols.copy()
+        inputs_cols = inputs_cols.copy()
+        target_cols.extend(["date", "patientid", "patient_sample_index"])
+        inputs_cols.extend(["patient_sample_index"])
+
+        output_saving = {}
+        return_meta_data_list = []
+        requests = []
+
+        for idx, (constants_row, true_events_input, true_future_events_input, target_dataframe) in enumerate(list_of_split_dfs):
+            logging.info("Generating vLLM request data - current idx: " + str(idx + 1) + " / " + str(len(list_of_split_dfs)))
+
+            patientid = constants_row["patientid"].tolist()[0]
+            patient_sample_index = true_events_input["patient_sample_index"].tolist()[0]
+
+            if patientid not in output_saving:
+                output_saving[patientid] = {}
+
+            try:
+                true_events_input = true_events_input.loc[:, inputs_cols]
+                true_future_events_input = true_future_events_input.loc[:, future_known_inputs_cols]
+                target_dataframe = target_dataframe.loc[:, target_cols]
+
+                str_input_raw, str_output, meta_data = preprocessing_function(constants_row, true_events_input, true_future_events_input, target_dataframe, eval_manager)
+                str_input = encoding_function(str_input_raw)
+
+                output_saving[patientid][patient_sample_index] = {
+                    "meta_data": meta_data,
+                    "input_data": str_input,
+                    "labels": str_output,
+                    "raw_input": str_input_raw,
+                    "generated_predictions": [],
+                    "generated_scores": [],
+                }
+
+                for sample_idx in range(num_samples_to_generate):
+                    request_max_tokens = compute_vllm_max_tokens(
+                        prompt=str_input,
+                        tokenizer=tokenizer,
+                        requested_max_new_tokens=max_new_tokens,
+                        total_max_length=total_max_length,
+                        dynamic_max_tokens=dynamic_max_tokens,
+                        minimum_max_tokens=minimum_max_tokens,
+                    )
+                    requests.append({
+                        "patientid": patientid,
+                        "patient_sample_index": patient_sample_index,
+                        "prompt": str_input,
+                        "seed": 8719 + (idx * max(num_samples_to_generate, 1)) + sample_idx,
+                        "max_tokens": request_max_tokens,
+                    })
+
+            except Exception:
+                traceback.print_exc()
+                logging.info("Error in generating vLLM request data!")
+                target_dataframe = target_dataframe.loc[:, target_cols]
+                output_saving[patientid][patient_sample_index] = {
+                    "meta_data": None,
+                    "input_data": "Error",
+                    "labels": "Error",
+                    "raw_input": "Error",
+                    "generated_predictions": ["Error"],
+                    "generated_scores": [],
+                }
+
+            empty_target_dataframe = target_dataframe.copy()
+            empty_target_dataframe.loc[:, [col for col in empty_target_dataframe.columns if col not in ["date", "patientid", "patient_sample_index"]]] = np.nan
+            output_saving[patientid][patient_sample_index]["empty_target_df"] = empty_target_dataframe
+
+            target_df = target_dataframe.copy()
+            target_df = target_df.dropna(axis=0, how='all', subset=target_df.columns.difference(["patientid", "patient_sample_index", "date"]))
+            output_saving[patientid][patient_sample_index]["target_df"] = target_df
+
+        if requests:
+            request_token_budgets = [request["max_tokens"] for request in requests]
+            logging.info(
+                "vLLM max_tokens budget summary: min="
+                + str(min(request_token_budgets))
+                + ", max="
+                + str(max(request_token_budgets))
+                + ", dynamic="
+                + str(dynamic_max_tokens)
+                + ", total_max_length="
+                + str(total_max_length)
+            )
+
+        async def generate_all():
+            semaphore = asyncio.Semaphore(max_concurrent_requests)
+            completions_url = prediction_url.rstrip("/") + "/completions"
+            failed_requests = []
+
+            def post_completion(payload):
+                encoded_payload = json.dumps(payload).encode("utf-8")
+                request = urllib.request.Request(
+                    completions_url,
+                    data=encoded_payload,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": "Bearer " + os.environ.get("DTGPT_VLLM_API_KEY", "token-abc123"),
+                    },
+                    method="POST",
+                )
+                try:
+                    with urllib.request.urlopen(request, timeout=600) as response:
+                        return json.loads(response.read().decode("utf-8"))
+                except urllib.error.HTTPError as error:
+                    error_body = error.read().decode("utf-8", errors="replace")
+                    raise RuntimeError(
+                        f"vLLM HTTP {error.code} for {completions_url}: {error_body}"
+                    ) from error
+
+            async def generate_one(request_idx, request):
+                async with semaphore:
+                    logging.info("vLLM request starting with index: " + str(request_idx + 1) + " / " + str(len(requests)))
+                    try:
+                        response = await asyncio.to_thread(
+                            post_completion,
+                            {
+                                "model": model_name,
+                                "prompt": request["prompt"],
+                                "max_tokens": request["max_tokens"],
+                                "seed": request["seed"],
+                                "temperature": temperature,
+                                "top_p": top_p,
+                            },
+                        )
+                        completion_text = response["choices"][0]["text"]
+                    except Exception as exc:
+                        traceback.print_exc()
+                        failed_requests.append(request_idx + 1)
+                        logging.info(
+                            "vLLM request failed for index "
+                            + str(request_idx + 1)
+                            + " with max_tokens="
+                            + str(request["max_tokens"])
+                            + ": "
+                            + str(exc)
+                        )
+                        completion_text = ""
+
+                    # HF decoding returns prompt + completion. Preserve that shape because the
+                    # Biomistral post-processor extracts the second top-level JSON object.
+                    return request["patientid"], request["patient_sample_index"], request["prompt"] + " " + completion_text
+
+            results = await asyncio.gather(*[generate_one(idx, request) for idx, request in enumerate(requests)])
+            if failed_requests:
+                message = (
+                    "vLLM generation failed for "
+                    + str(len(failed_requests))
+                    + " request(s); first failed request indices: "
+                    + str(failed_requests[:20])
+                )
+                if fail_on_request_error:
+                    raise RuntimeError(message)
+                logging.warning(message + "; continuing with empty failed completions")
+            return results
+
+        if requests:
+            for patientid, patient_sample_index, prediction_str in asyncio.run(generate_all()):
+                output_saving[patientid][patient_sample_index]["generated_predictions"].append(prediction_str)
+
+                if verbose and len(output_saving[patientid][patient_sample_index]["generated_predictions"]) == 1:
+                    logging.info("Raw Input: " + str(output_saving[patientid][patient_sample_index]["raw_input"]))
+                    logging.info("Input: " + str(output_saving[patientid][patient_sample_index]["input_data"]))
+                    logging.info("Labels: " + str(output_saving[patientid][patient_sample_index]["labels"]))
+                    logging.info("Raw Prediction: " + str(prediction_str))
+
+        logging.info("Finished vLLM generation! Now converting and merging")
+        meta_data = {}
+        curr_index = 0
+
+        for patientid in output_saving.keys():
+            for patient_sample_index in output_saving[patientid].keys():
+                merging_list = []
+
+                for prediction_string in output_saving[patientid][patient_sample_index]["generated_predictions"]:
+                    good_sample = True
+                    if output_string_filtering_function is not None:
+                        good_sample = output_string_filtering_function(prediction_string)
+
+                    try:
+                        logging.info("Evaluating split - current idx: " + str((patientid, patient_sample_index)) + " " + str(curr_index + 1) + " / " + str(len(list_of_split_dfs)))
+                        predicted_df = post_processing_function(prediction_string, patientid, patient_sample_index, meta_data=output_saving[patientid][patient_sample_index]["meta_data"])
+                    except KeyboardInterrupt:
+                        print("Keyboard interrupt!")
+                        return None, None
+                    except Exception:
+                        traceback.print_exc()
+                        predicted_df = output_saving[patientid][patient_sample_index]["empty_target_df"]
+                        good_sample = False
+                        logging.info("Falling back to empty DF.")
+
+                    predicted_df = align_prediction_to_target_shape(
+                        predicted_df,
+                        output_saving[patientid][patient_sample_index]["target_df"],
+                        target_cols_orginal,
+                    )
+
+                    if patientid not in meta_data:
+                        meta_data[patientid] = {}
+                    if patient_sample_index not in meta_data[patientid]:
+                        meta_data[patientid][patient_sample_index] = {"probability_score": []}
+
+                    merging_list.append((good_sample, predicted_df))
+
+                interesting_samples = [x for x in merging_list if x[0]]
+
+                if len(interesting_samples) != len(merging_list):
+                    logging.info("Skipping bad samples for this prediction - resulting nr of samples to use: " + str(len(interesting_samples)))
+
+                if len(interesting_samples) == 0:
+                    logging.info("No good output samples for this prediction - using all bad samples for final predictions")
+                    interesting_samples = [x for x in merging_list]
+
+                merged_np = build_prediction_cube(
+                    [x[1] for x in interesting_samples],
+                    target_cols_orginal,
+                )
+
+                aggregated_np = aggregate_prediction_cube(
+                    merged_np,
+                    sample_merging_strategy,
+                )
+
+                final_df = merging_list[0][1].copy()
+                final_df[target_cols_orginal] = aggregated_np
+
+                if return_meta_data:
+                    return_meta_data_list.append({
+                        "patientid": str(patientid),
+                        "patient_sample_index": str(patient_sample_index),
+                        "generated_trajectories": [x[1].values.tolist() for x in merging_list if x[0]],
+                        "used_trajectories": [x[1].values.tolist() for x in interesting_samples],
+                        "model_scores": None,
+                    })
+
+                eval_manager.evaluate_split_stream_prediction(final_df, output_saving[patientid][patient_sample_index]["target_df"], patientid, patient_sample_index)
+                curr_index += 1
+
+        logging.info("Finished generating samples")
+
+        full_df_targets, full_df_prediction = eval_manager.concat_eval()
+
+        if return_meta_data:
+            return full_df_targets, full_df_prediction, return_meta_data_list
+        else:
             return full_df_targets, full_df_prediction
 
 
