@@ -17,6 +17,7 @@ REPO_ROOT="/home/r15543056/trajectory_forecast/DT-GPT"
 DATA_ROOT="${DTGPT_MIMIC_DATA_ROOT:-${REPO_ROOT}/1_experiments/2024_02_08_mimic_iv/1_data}"
 RAW_EVENTS_DIR="${DTGPT_MIMIC_RAW_EVENTS_DIR:-${DATA_ROOT}/1_preprocessing/1_raw_events/csv}"
 RAW_STATS_PATH="${DTGPT_MIMIC_RAW_STATS_PATH:-${DATA_ROOT}/1_preprocessing/2024_02_01_raw_data_stats.json}"
+DATASET_STATS_PATH="${DATA_ROOT}/1_preprocessing/dataset_statistics.json"
 FINAL_DATA_DIR="${DATA_ROOT}/0_final_data"
 FINAL_EVENTS_DIR="${FINAL_DATA_DIR}/events"
 RUNNER_PATH="${DATA_ROOT}/1_preprocessing/2024_03_15_runner.py"
@@ -56,6 +57,7 @@ echo "Conda env: ${DTGPT_CONDA_ENV:-dtgpt}"
 echo "Python: ${PYTHON_BIN}"
 echo "Raw events input: ${DTGPT_MIMIC_RAW_EVENTS_DIR}"
 echo "Raw stats path: ${DTGPT_MIMIC_RAW_STATS_PATH}"
+echo "Dataset stats path: ${DATASET_STATS_PATH}"
 echo "Final data dir: ${FINAL_DATA_DIR}"
 echo "Runner: ${RUNNER_PATH}"
 echo "Worker count: ${DTGPT_MIMIC_NUM_WORKERS}"
@@ -99,6 +101,14 @@ mkdir -p "${FINAL_EVENTS_DIR}"
 FINAL_EVENT_COUNT="$(find "${FINAL_EVENTS_DIR}" -maxdepth 1 -name '*_events.csv' -type f | wc -l)"
 echo "Final event files: ${FINAL_EVENT_COUNT}"
 ls -lh "${FINAL_DATA_DIR}/constants.csv" "${RAW_STATS_PATH}"
+
+if [ -f "${DATASET_STATS_PATH}" ]; then
+    cp "${DATASET_STATS_PATH}" "${FINAL_DATA_DIR}/dataset_statistics.json"
+    ls -lh "${FINAL_DATA_DIR}/dataset_statistics.json"
+else
+    echo "Missing dataset stats file: ${DATASET_STATS_PATH}" >&2
+    exit 1
+fi
 
 if [ "${FINAL_EVENT_COUNT}" -eq 0 ]; then
     echo "No final event files were generated." >&2

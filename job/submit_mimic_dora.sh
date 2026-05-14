@@ -3,7 +3,7 @@
 #SBATCH --partition=l40s
 #SBATCH --account=l40s
 #SBATCH --nodes=1
-#SBATCH --cpus-per-task=3
+#SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:2
 #SBATCH --time=7-0:0
 #SBATCH --output=logs/mimic_dora_sweep_%j.out
@@ -13,7 +13,8 @@
 
 set -euo pipefail
 
-cd "${SLURM_SUBMIT_DIR:-$(pwd)}"
+REPO_ROOT="${DTGPT_REPO_ROOT:-/share/home/r15543056/trajectory_forecast/DT-GPT}"
+cd "${REPO_ROOT}"
 
 mkdir -p logs
 
@@ -40,17 +41,17 @@ export HF_HOME="${HF_HOME:-${DTGPT_RUNTIME_CACHE_ROOT}/hf_home}"
 unset TRANSFORMERS_CACHE
 export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-${DTGPT_RUNTIME_CACHE_ROOT}/triton}"
 export MPLCONFIGDIR="${MPLCONFIGDIR:-${DTGPT_RUNTIME_CACHE_ROOT}/matplotlib}"
-export PYTHONPATH="${PYTHONPATH:-.}"
+export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}"
 mkdir -p "${HF_HOME}" "${TRITON_CACHE_DIR}" "${MPLCONFIGDIR}"
 
-if [ -z "${DTGPT_PYTHON_BIN:-}" ] && command -v conda >/dev/null 2>&1; then
+if command -v conda >/dev/null 2>&1; then
     CONDA_BASE="$(conda info --base)"
-    # Load conda into this non-interactive shell so batch jobs use the expected env.
     source "${CONDA_BASE}/etc/profile.d/conda.sh"
-    conda activate "${DTGPT_CONDA_ENV:-dtgpt}"
-    PYTHON_BIN="python"
+    conda activate dtgpt-unsloth
+    PYTHON_BIN="$(command -v python)"
 else
-    PYTHON_BIN="${DTGPT_PYTHON_BIN:-python3}"
+    echo "conda is not available in this job environment."
+    exit 1
 fi
 unset TRANSFORMERS_CACHE
 
@@ -69,7 +70,7 @@ export NCCL_DEBUG="${NCCL_DEBUG:-INFO}"
 export NCCL_ASYNC_ERROR_HANDLING="${NCCL_ASYNC_ERROR_HANDLING:-1}"
 export TORCH_DISTRIBUTED_DEBUG="${TORCH_DISTRIBUTED_DEBUG:-DETAIL}"
 
-"${PYTHON_BIN}" -c "import os, torch; print('Torch:', torch.__version__); print('Torch CUDA:', torch.version.cuda); print('Torch NCCL:', torch.cuda.nccl.version()); print('CUDA available:', torch.cuda.is_available()); print('NCCL lib override:', os.environ.get('LD_LIBRARY_PATH', '').split(':')[0])"
+"${PYTHON_BIN}" -c "import os, sys, torch; print('Python executable:', sys.executable); print('Python prefix:', sys.prefix); print('Conda env:', os.environ.get('CONDA_DEFAULT_ENV')); print('Torch:', torch.__version__); print('Torch CUDA:', torch.version.cuda); print('Torch NCCL:', torch.cuda.nccl.version()); print('CUDA available:', torch.cuda.is_available()); print('NCCL lib override:', os.environ.get('LD_LIBRARY_PATH', '').split(':')[0])"
 
 # These defaults target 2x L40S with Unsloth 4-bit QLoRA + DoRA at r=16.
 SEQ_MAX_LEN="${DTGPT_SEQ_MAX_LEN:-6000}"
@@ -84,7 +85,7 @@ SAMPLE_MERGING_STRATEGY="${DTGPT_SAMPLE_MERGING_STRATEGY:-mean}"
 GRADIENT_CHECKPOINTING="${DTGPT_GRADIENT_CHECKPOINTING:-1}"
 USE_DORA="${DTGPT_USE_DORA:-1}"
 USE_UNSLOTH="${DTGPT_USE_UNSLOTH:-1}"
-USE_DISTRIBUTED="${DTGPT_USE_DISTRIBUTED:-1}"
+USE_DISTRIBUTED="${DTGPT_USE_DISTRIBUTED:-0}"
 USE_DEEPSPEED="${DTGPT_USE_DEEPSPEED:-0}"
 NPROC_PER_NODE="${DTGPT_NPROC_PER_NODE:-2}"
 DEEPSPEED_CONFIG="${DTGPT_DEEPSPEED_CONFIG:-job/deepspeed_zero3_config.json}"
@@ -126,6 +127,7 @@ echo "MIMIC raw events dir: ${DTGPT_MIMIC_RAW_EVENTS_DIR}"
 echo "MIMIC raw stats path: ${DTGPT_MIMIC_RAW_STATS_PATH}"
 echo "Patient split fraction: ${DTGPT_PATIENT_SPLIT_FRACTION}"
 echo "Python binary: ${PYTHON_BIN}"
+echo "Working directory: $(pwd)"
 echo "HF home: ${HF_HOME}"
 echo "Sequence max length: ${SEQ_MAX_LEN}"
 echo "Run timestamp: ${DTGPT_RUN_TIMESTAMP}"
@@ -142,10 +144,15 @@ if [ "${USE_DISTRIBUTED}" = "1" ]; then
 else
     echo "Distributed launcher: disabled"
 fi
+if [ "${USE_UNSLOTH}" = "1" ] && [ "${USE_DISTRIBUTED}" = "1" ]; then
+    echo "Unsloth does not support multi-GPU distributed training in this setup."
+    echo "Run with DTGPT_USE_DISTRIBUTED=0, or set DTGPT_USE_UNSLOTH=0 for distributed standard PEFT."
+    exit 1
+fi
 if [ "${USE_DEEPSPEED}" = "1" ]; then
     echo "Distributed training: DeepSpeed ZeRO-3 (${NPROC_PER_NODE} processes)"
     echo "DeepSpeed config: ${DEEPSPEED_CONFIG}"
-    if ! "${PYTHON_BIN}" -c "import deepspeed" >/dev/null 2>&1; then
+    if ! "${PYTHON_BIN}" -c "import deepspeed"; then
         echo "DeepSpeed requested, but it is not installed for ${PYTHON_BIN}."
         echo "Use DTGPT_USE_DEEPSPEED=0 for single-process training, or install deepspeed in the selected conda env."
         exit 1
@@ -155,9 +162,9 @@ else
 fi
 if [ "${USE_UNSLOTH}" = "1" ]; then
     echo "Training mode: DoRA + Unsloth (4-bit QLoRA)"
-    if ! "${PYTHON_BIN}" -c "import unsloth" >/dev/null 2>&1; then
-        echo "Unsloth requested, but it is not installed for ${PYTHON_BIN}."
-        echo "Use DTGPT_USE_UNSLOTH=0 for the dtgpt env, or set DTGPT_CONDA_ENV to an env with unsloth installed."
+    if ! "${PYTHON_BIN}" -c "import unsloth"; then
+        echo "Unsloth requested, but it cannot be imported by ${PYTHON_BIN}."
+        echo "Use DTGPT_USE_UNSLOTH=0 if you want to run without unsloth."
         exit 1
     fi
 elif [ "${USE_DORA}" = "1" ]; then
@@ -166,7 +173,7 @@ else
     echo "Training mode: LoRA (standard PEFT)"
 fi
 if [ "${USE_DORA}" = "1" ] || [ "${USE_UNSLOTH}" = "1" ]; then
-    if ! "${PYTHON_BIN}" -c "import inspect; from peft import LoraConfig; raise SystemExit(0 if 'use_dora' in inspect.signature(LoraConfig).parameters else 1)" >/dev/null 2>&1; then
+    if ! "${PYTHON_BIN}" -c "import inspect; from peft import LoraConfig; raise SystemExit(0 if 'use_dora' in inspect.signature(LoraConfig).parameters else 1)"; then
         echo "DoRA requested, but this PEFT install does not support LoraConfig(use_dora=...)."
         echo "Use DTGPT_USE_DORA=0 DTGPT_USE_UNSLOTH=0 for the dtgpt env, or upgrade PEFT in the selected conda env."
         exit 1

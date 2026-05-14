@@ -256,7 +256,10 @@ def get_model_load_kwargs(cache_dir, device_map="auto", training=False):
     if device_map is not None:
         kwargs["device_map"] = device_map
 
-    attn_implementation = precision["attn_implementation"]
+    attn_implementation = os.environ.get(
+        "DTGPT_ATTN_IMPLEMENTATION",
+        precision["attn_implementation"],
+    )
     if attn_implementation:
         kwargs["attn_implementation"] = attn_implementation
     return kwargs

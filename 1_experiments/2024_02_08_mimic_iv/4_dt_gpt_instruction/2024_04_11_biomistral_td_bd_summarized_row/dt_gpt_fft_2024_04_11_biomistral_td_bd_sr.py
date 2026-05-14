@@ -41,6 +41,7 @@ from pipeline.lora_helpers import (
     build_mistral_lora_config,
     load_lora_model_for_inference,
 )
+from pipeline.evaluation_shards import shard_suffix, slice_by_shard
 
 
 
@@ -65,7 +66,16 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
                 use_dora=False,
                 use_unsloth=False,
                 deepspeed_config=None,
-                sft_dataset_num_proc=1):
+                sft_dataset_num_proc=1,
+                eval_backend="vllm",
+                eval_shard_index=0,
+                eval_num_shards=1,
+                eval_max_samples=None,
+                prediction_url="http://127.0.0.1:18101/v1/",
+                vllm_model_name=None,
+                max_concurrent_requests=16,
+                vllm_temperature=1.0,
+                vllm_top_p=0.9):
 
         
         ######################################################## SETUP EXPERIMENT ########################################################
@@ -94,6 +104,8 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
 
 
         eval_manager = EvaluationManager("2024_03_15_mimic_iv")
+        if eval_backend not in ["hf", "vllm"]:
+            raise ValueError("eval_backend must be either 'hf' or 'vllm'")
 
         experiment = Experiment(
             "setup",
@@ -132,6 +144,26 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
         validation_events, validation_meta = splitter.setup_split_indices(validation_full_events, eval_manager)
 
         test_events, test_meta = splitter.setup_split_indices(test_full_events, eval_manager)
+        test_events_full_count = len(test_events)
+        test_events, test_meta = slice_by_shard(
+            test_events,
+            test_meta,
+            shard_index=eval_shard_index,
+            num_shards=eval_num_shards,
+        )
+        if eval_max_samples is not None:
+            test_events = test_events[:eval_max_samples]
+            test_meta = test_meta[:eval_max_samples]
+        test_set_output_name = test_set + shard_suffix(eval_shard_index, eval_num_shards)
+        logging.info(
+            "Using eval backend %s; test shard %s/%s contains %s of %s samples; eval_max_samples=%s",
+            eval_backend,
+            eval_shard_index,
+            eval_num_shards,
+            len(test_events),
+            test_events_full_count,
+            eval_max_samples,
+        )
         
         path_to_statistics_file = str(get_mimic_dataset_statistics_path())
         with open(path_to_statistics_file) as f:
@@ -461,7 +493,7 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
                     )
 
 
-        if eval_model_path is not None:
+        if eval_model_path is not None and eval_backend == "hf":
 
             logging.info("Model load from path")
 
@@ -488,6 +520,9 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
                         eval_model_path,
                         **inference_load_kwargs,
                     )
+        elif eval_model_path is not None and eval_backend == "vllm":
+            logging.info("Skipping local HF model load because eval backend is vllm")
+            model = None
 
 
         # Setup data processing for inference
@@ -551,25 +586,44 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
 
         def evaluate_and_record(eval_set_events, eval_set_name, eval_meta_data, num_samples_to_generate, sample_merging_strategy, batch_size=BATCH_SIZE_VALIDATION):
 
-            #: get targets and predictions
-            eval_targets, eval_prediction, return_meta_data_list = experiment.get_output_for_split_hf_default(eval_set_events, 
-                                                                                        eval_manager, 
-                                                                                        preprocessing_function=preprocessing_function, 
-                                                                                        tokenizer=dp.tokenizer,
-                                                                                        encoding_function=encoding_function, 
-                                                                                        decoding_function=decoding_function, 
-                                                                                        post_processing_function=post_processing_function,
-                                                                                        batch_size=batch_size,
-                                                                                        verbose=verbose,
-                                                                                        gen_top_p=0.9,
-                                                                                        gen_do_sample=True,
-                                                                                        max_new_tokens=max_new_tokens_to_generate,
-                                                                                        num_samples_to_generate=num_samples_to_generate, 
-                                                                                        sample_merging_strategy=sample_merging_strategy,
-                                                                                        pad_token_id=dp.tokenizer.eos_token_id,
-                                                                                        max_output_length=4000,                     # Setting this here due to mistral long context bug, need to check if causes errors
-                                                                                        return_meta_data=True,
-                                                                                        note_down_probabilities=True)
+            if eval_backend == "vllm":
+                eval_targets, eval_prediction, return_meta_data_list = experiment.get_output_for_split_vllm_completions(
+                    eval_set_events,
+                    eval_manager,
+                    preprocessing_function=preprocessing_function,
+                    encoding_function=encoding_function,
+                    post_processing_function=post_processing_function,
+                    verbose=verbose,
+                    max_new_tokens=max_new_tokens_to_generate,
+                    num_samples_to_generate=num_samples_to_generate,
+                    sample_merging_strategy=sample_merging_strategy,
+                    max_output_length=4000,
+                    return_meta_data=True,
+                    prediction_url=prediction_url,
+                    model_name=vllm_model_name or eval_model_path,
+                    max_concurrent_requests=max_concurrent_requests,
+                    temperature=vllm_temperature,
+                    top_p=vllm_top_p,
+                )
+            else:
+                eval_targets, eval_prediction, return_meta_data_list = experiment.get_output_for_split_hf_default(eval_set_events, 
+                                                                                            eval_manager, 
+                                                                                            preprocessing_function=preprocessing_function, 
+                                                                                            tokenizer=dp.tokenizer,
+                                                                                            encoding_function=encoding_function, 
+                                                                                            decoding_function=decoding_function, 
+                                                                                            post_processing_function=post_processing_function,
+                                                                                            batch_size=batch_size,
+                                                                                            verbose=verbose,
+                                                                                            gen_top_p=0.9,
+                                                                                            gen_do_sample=True,
+                                                                                            max_new_tokens=max_new_tokens_to_generate,
+                                                                                            num_samples_to_generate=num_samples_to_generate, 
+                                                                                            sample_merging_strategy=sample_merging_strategy,
+                                                                                            pad_token_id=dp.tokenizer.eos_token_id,
+                                                                                            max_output_length=4000,                     # Setting this here due to mistral long context bug, need to check if causes errors
+                                                                                            return_meta_data=True,
+                                                                                            note_down_probabilities=True)
             
             # Do filtering without standardizing
             eval_targets_filtered, eval_prediction_filtered = only_standardize.normalize_and_filter(eval_targets, eval_prediction)
@@ -593,7 +647,7 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
         ######################################################## TEST EVAL ########################################################
         
         logging.info("Test set Eval")
-        test_targets, test_prediction, test_meta_data = evaluate_and_record(test_events, test_set, test_meta, num_samples_to_generate=num_samples_to_generate, sample_merging_strategy=sample_merging_strategy)
+        test_targets, test_prediction, test_meta_data = evaluate_and_record(test_events, test_set_output_name, test_meta, num_samples_to_generate=num_samples_to_generate, sample_merging_strategy=sample_merging_strategy)
 
 
 

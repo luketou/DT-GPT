@@ -57,11 +57,13 @@ import importlib.metadata as metadata
 import inspect
 import sys
 
+from packaging.version import Version
+
 packages = [
     "torch",
     "triton",
     "unsloth",
-    "unsloth_zoo",
+    "xformers",
     "transformers",
     "trl",
     "peft",
@@ -85,14 +87,22 @@ import torch
 print("Torch CUDA:", torch.version.cuda)
 print("CUDA available:", torch.cuda.is_available())
 
-import unsloth
 from peft import LoraConfig
 
 if "use_dora" not in inspect.signature(LoraConfig).parameters:
     raise SystemExit("PEFT LoraConfig does not expose use_dora")
 
-print("Unsloth import: OK")
 print("PEFT DoRA support: OK")
+trl_version = Version(metadata.version("trl"))
+if not (Version("0.7.9") <= trl_version < Version("0.9.0")):
+    raise SystemExit(f"Unsloth 2024.8 requires trl>=0.7.9,<0.9.0; found {trl_version}")
+
+print("Unsloth TRL compatibility: OK")
+if torch.cuda.is_available():
+    import unsloth
+    print("Unsloth import: OK")
+else:
+    print("Unsloth import: SKIPPED (CUDA GPU not visible on this install node)")
 PY
 
 echo "dtgpt-unsloth dependency installation completed."

@@ -9,6 +9,59 @@ import os
 
 ######################################################## Make LoT splits here #################################################
 
+
+def _add_missing_columns(dataframe, required_columns, context):
+    missing_columns = []
+    for col in required_columns:
+        if col not in dataframe.columns and col not in missing_columns:
+            missing_columns.append(col)
+    if missing_columns:
+        logging.warning(
+            "%s: adding %s missing declared columns as empty columns: %s",
+            context,
+            len(missing_columns),
+            missing_columns,
+        )
+        dataframe = dataframe.reindex(columns=dataframe.columns.tolist() + missing_columns)
+    return dataframe
+
+
+def _is_empty_measurement_frame(dataframe, columns, count_zeros_as_nans=False):
+    measurement_frame = dataframe[columns]
+    if count_zeros_as_nans:
+        measurement_frame = measurement_frame.mask(measurement_frame == 0)
+    return measurement_frame.isnull().all().all()
+
+
+def _summarize_empty_split_skip(skip_summary, patientid, input_empty, output_empty):
+    skip_summary["total"] += 1
+    if input_empty:
+        skip_summary["empty_input"] += 1
+    if output_empty:
+        skip_summary["empty_output"] += 1
+    if len(skip_summary["examples"]) < 10:
+        skip_summary["examples"].append(
+            {
+                "patientid": str(patientid),
+                "empty_input": bool(input_empty),
+                "empty_output": bool(output_empty),
+            }
+        )
+
+
+def _log_empty_split_summary(splitter_name, skip_summary, total_patients):
+    if skip_summary["total"] == 0:
+        return
+    logging.info(
+        "%s skipped %s / %s patients due to empty input or output. Empty input: %s Empty output: %s Examples: %s",
+        splitter_name,
+        skip_summary["total"],
+        total_patients,
+        skip_summary["empty_input"],
+        skip_summary["empty_output"],
+        skip_summary["examples"],
+    )
+
         
 
 
@@ -346,6 +399,12 @@ class After24HSplitter:
         # Setup return
         ret_list = []
         meta_data = []
+        skip_summary = {
+            "total": 0,
+            "empty_input": 0,
+            "empty_output": 0,
+            "examples": [],
+        }
 
         #: go through all
         for idx, patient_events_table in enumerate(list_of_dfs):
@@ -372,6 +431,11 @@ class After24HSplitter:
             curr_patient_events_table = patient_events_table.copy()
             split_index_name = "split_0"
             curr_patient_events_table["patient_sample_index"] = split_index_name
+            curr_patient_events_table = _add_missing_columns(
+                curr_patient_events_table,
+                inputs_cols + future_known_inputs_cols + target_cols + cols_to_extract,
+                "24H Splitter patientid " + str(patientid),
+            )
 
             true_events_input = curr_patient_events_table.loc[curr_patient_events_table["date"].isin(before_dates), inputs_cols]
             true_future_events_input = curr_patient_events_table.loc[curr_patient_events_table["date"].isin(after_dates), future_known_inputs_cols]
@@ -379,26 +443,26 @@ class After24HSplitter:
             curr_const_row = eval_manager._current_master_constants_table.loc[eval_manager._current_master_constants_table["patientid"] == patientid]
 
             #: Check if empty input or output and then skip
-            input_empty_check = true_events_input[cols_to_extract].isnull().all().all()
-            output_empty_check = target_dataframe[cols_to_extract].isnull().all().all()
-
-            #: need to check for purely zeros as well
-            if count_zeros_as_nans_in_target:
-                output_empty_check_zeros = target_dataframe[cols_to_extract].eq(0).all().all()
-                input_empty_check_zeros = true_events_input[cols_to_extract].eq(0).all().all()
-
-                input_empty_check = input_empty_check or input_empty_check_zeros
-                output_empty_check = output_empty_check or output_empty_check_zeros
+            input_empty_check = _is_empty_measurement_frame(
+                true_events_input,
+                cols_to_extract,
+                count_zeros_as_nans=count_zeros_as_nans_in_target,
+            )
+            output_empty_check = _is_empty_measurement_frame(
+                target_dataframe,
+                cols_to_extract,
+                count_zeros_as_nans=count_zeros_as_nans_in_target,
+            )
 
             if input_empty_check or output_empty_check:
-                logging.info("Skipping patient due to empty input or output - patientid: " + str(patientid) + " Empty input: " + str(input_empty_check) + " Empty output: " + str(output_empty_check))
+                _summarize_empty_split_skip(skip_summary, patientid, input_empty_check, output_empty_check)
                 continue
             
             # Add to return list
             ret_list.append((curr_const_row, true_events_input, true_future_events_input, target_dataframe))
 
             #: create last_input_values_of_targets
-            last_input_dates = self._return_subset_dates_with_values(original_date_list=before_dates, dataframe=patient_events_table, cols_to_extract=cols_to_extract)
+            last_input_dates = self._return_subset_dates_with_values(original_date_list=before_dates, dataframe=curr_patient_events_table, cols_to_extract=cols_to_extract)
             last_input_values_of_targets = curr_patient_events_table.loc[curr_patient_events_table["date"].isin(last_input_dates), cols_to_extract]
             last_input_values_of_targets = [(split_date, value, col_name) for col_name, value in zip(last_input_values_of_targets.columns, last_input_values_of_targets.iloc[-1, :])]
 
@@ -414,6 +478,8 @@ class After24HSplitter:
 
 
 
+
+        _log_empty_split_summary("24H Splitter", skip_summary, len(list_of_dfs))
 
         return ret_list, meta_data
     
@@ -473,6 +539,12 @@ class After1VisitSplitter:
         # Setup return
         ret_list = []
         meta_data = []
+        skip_summary = {
+            "total": 0,
+            "empty_input": 0,
+            "empty_output": 0,
+            "examples": [],
+        }
 
         #: go through all
         for idx, patient_events_table in enumerate(list_of_dfs):
@@ -506,19 +578,19 @@ class After1VisitSplitter:
             curr_const_row = eval_manager._current_master_constants_table.loc[eval_manager._current_master_constants_table["patientid"] == patientid]
 
             #: Check if empty input or output and then skip
-            input_empty_check = true_events_input[cols_to_extract].isnull().all().all()
-            output_empty_check = target_dataframe[cols_to_extract].isnull().all().all()
-
-            #: need to check for purely zeros as well
-            if count_zeros_as_nans_in_target:
-                output_empty_check_zeros = target_dataframe[cols_to_extract].eq(0).all().all()
-                input_empty_check_zeros = true_events_input[cols_to_extract].eq(0).all().all()
-
-                input_empty_check = input_empty_check or input_empty_check_zeros
-                output_empty_check = output_empty_check or output_empty_check_zeros
+            input_empty_check = _is_empty_measurement_frame(
+                true_events_input,
+                cols_to_extract,
+                count_zeros_as_nans=count_zeros_as_nans_in_target,
+            )
+            output_empty_check = _is_empty_measurement_frame(
+                target_dataframe,
+                cols_to_extract,
+                count_zeros_as_nans=count_zeros_as_nans_in_target,
+            )
 
             if input_empty_check or output_empty_check:
-                logging.info("Skipping patient due to empty input or output - patientid: " + str(patientid) + " Empty input: " + str(input_empty_check) + " Empty output: " + str(output_empty_check))
+                _summarize_empty_split_skip(skip_summary, patientid, input_empty_check, output_empty_check)
                 continue
             
             # Add to return list
@@ -542,13 +614,10 @@ class After1VisitSplitter:
 
 
 
+        _log_empty_split_summary("1 visit Splitter", skip_summary, len(list_of_dfs))
+
         return ret_list, meta_data
     
-
-
-
-
-
 
 
 

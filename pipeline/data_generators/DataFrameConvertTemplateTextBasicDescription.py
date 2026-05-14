@@ -411,15 +411,15 @@ class DTGPTDataFrameConverterTemplateTextBasicDescription(DataFrameConverter):
         non_diagnosis_cols = [col for col in true_events_output.columns.tolist() if not col.startswith("diagnosis.")]
         if "progression_progression" in true_events_output.columns:
             true_events_output["progression_progression"] = true_events_output["progression_progression"].replace("<UNK>", "Not documented", inplace=False)
-        true_events_output[non_diagnosis_cols] = true_events_output[non_diagnosis_cols].applymap(lambda x: x if x != "<UNK>" else np.nan)
+        true_events_output[non_diagnosis_cols] = true_events_output[non_diagnosis_cols].map(lambda x: x if x != "<UNK>" else np.nan)
 
         #  convert all <UNK> in diagnosis to NA, and all diagnosed
         diagnosis_cols = [col for col in true_events_output.columns.tolist() if col.startswith("diagnosis.")]
-        true_events_output[diagnosis_cols] = true_events_output[diagnosis_cols].applymap(lambda x: "diagnosed" if x != "<UNK>" else np.nan)
+        true_events_output[diagnosis_cols] = true_events_output[diagnosis_cols].map(lambda x: "diagnosed" if x != "<UNK>" else np.nan)
 
         #: convert all "unknown" in drug dosage to "administered" - drugs only in input
         drug_cols = [col for col in true_events_input.columns.tolist() if col.startswith("drug.")]
-        true_events_input[drug_cols] = true_events_input[drug_cols].applymap(lambda x: "administered" if x == "unknown" else x)
+        true_events_input[drug_cols] = true_events_input[drug_cols].map(lambda x: "administered" if x == "unknown" else x)
 
 
         # : get difference in days from output seq to last of the input
@@ -636,7 +636,6 @@ class DTGPTDataFrameConverterTemplateTextBasicDescription(DataFrameConverter):
         
         #: return
         return prediction_df
-
 
 
 
