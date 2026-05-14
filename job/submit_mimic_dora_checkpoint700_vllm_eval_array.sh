@@ -65,9 +65,23 @@ PORT="${DTGPT_VLLM_PORT:-$((18100 + DTGPT_EVAL_SHARD_INDEX))}"
 SERVED_MODEL="${DTGPT_VLLM_MODEL_NAME:-dtgpt_mimic_dora_checkpoint700}"
 SERVER_LOG="logs/mimic_dora_vllm_server_${SLURM_ARRAY_JOB_ID:-${SLURM_JOB_ID}}_${DTGPT_EVAL_SHARD_INDEX}.log"
 VLLM_MAX_MODEL_LEN="${DTGPT_VLLM_MAX_MODEL_LEN:-4096}"
-CLIENT_SEQ_MAX_LEN="${DTGPT_SEQ_MAX_LEN:-2900}"
-MAX_NEW_TOKENS="${DTGPT_MAX_NEW_TOKENS:-768}"
+CLIENT_SEQ_MAX_LEN="${DTGPT_SEQ_MAX_LEN:-3400}"
+MAX_NEW_TOKENS="${DTGPT_MAX_NEW_TOKENS:-900}"
 MAX_CONCURRENT_REQUESTS="${DTGPT_MAX_CONCURRENT_REQUESTS:-8}"
+NUM_SAMPLES_TO_GENERATE="${DTGPT_NUM_SAMPLES_TO_GENERATE:-30}"
+VLLM_TOTAL_MAX_LENGTH="${DTGPT_VLLM_TOTAL_MAX_LENGTH:-4092}"
+VLLM_DYNAMIC_MAX_TOKENS="${DTGPT_VLLM_DYNAMIC_MAX_TOKENS:-1}"
+VLLM_MINIMUM_MAX_TOKENS="${DTGPT_VLLM_MINIMUM_MAX_TOKENS:-1}"
+VLLM_CONTINUE_ON_REQUEST_ERROR="${DTGPT_VLLM_CONTINUE_ON_REQUEST_ERROR:-1}"
+
+DYNAMIC_MAX_TOKENS_FLAG=()
+CONTINUE_ON_REQUEST_ERROR_FLAG=()
+if [[ "${VLLM_DYNAMIC_MAX_TOKENS}" == "1" || "${VLLM_DYNAMIC_MAX_TOKENS}" == "true" || "${VLLM_DYNAMIC_MAX_TOKENS}" == "True" || "${VLLM_DYNAMIC_MAX_TOKENS}" == "yes" || "${VLLM_DYNAMIC_MAX_TOKENS}" == "YES" ]]; then
+    DYNAMIC_MAX_TOKENS_FLAG=(--vllm-dynamic-max-tokens)
+fi
+if [[ "${VLLM_CONTINUE_ON_REQUEST_ERROR}" == "1" || "${VLLM_CONTINUE_ON_REQUEST_ERROR}" == "true" || "${VLLM_CONTINUE_ON_REQUEST_ERROR}" == "True" || "${VLLM_CONTINUE_ON_REQUEST_ERROR}" == "yes" || "${VLLM_CONTINUE_ON_REQUEST_ERROR}" == "YES" ]]; then
+    CONTINUE_ON_REQUEST_ERROR_FLAG=(--vllm-continue-on-request-error)
+fi
 
 cleanup() {
     if [[ -n "${VLLM_PID:-}" ]]; then
@@ -89,6 +103,11 @@ echo "vLLM max model length: ${VLLM_MAX_MODEL_LEN}"
 echo "Client sequence max length: ${CLIENT_SEQ_MAX_LEN}"
 echo "Max new tokens: ${MAX_NEW_TOKENS}"
 echo "Max concurrent requests: ${MAX_CONCURRENT_REQUESTS}"
+echo "Num samples to generate: ${NUM_SAMPLES_TO_GENERATE}"
+echo "vLLM total max length: ${VLLM_TOTAL_MAX_LENGTH}"
+echo "vLLM dynamic max tokens: ${VLLM_DYNAMIC_MAX_TOKENS}"
+echo "vLLM minimum max tokens: ${VLLM_MINIMUM_MAX_TOKENS}"
+echo "vLLM continue on request error: ${VLLM_CONTINUE_ON_REQUEST_ERROR}"
 echo "Eval max samples: ${DTGPT_EVAL_MAX_SAMPLES:-FULL_SHARD}"
 echo "VLLM_USE_FLASHINFER_SAMPLER: ${VLLM_USE_FLASHINFER_SAMPLER}"
 
@@ -149,7 +168,7 @@ echo "Client Python binary: ${CLIENT_PYTHON_BIN}"
     --eval-model-path "${CHECKPOINT_PATH}" \
     --validation-batch-size "${DTGPT_VALIDATION_BATCH_SIZE:-1}" \
     --seq-max-len "${CLIENT_SEQ_MAX_LEN}" \
-    --num-samples-to-generate "${DTGPT_NUM_SAMPLES_TO_GENERATE:-1}" \
+    --num-samples-to-generate "${NUM_SAMPLES_TO_GENERATE}" \
     --max-new-tokens-to-generate "${MAX_NEW_TOKENS}" \
     --eval-backend vllm \
     --eval-shard-index "${DTGPT_EVAL_SHARD_INDEX}" \
@@ -159,7 +178,11 @@ echo "Client Python binary: ${CLIENT_PYTHON_BIN}"
     --vllm-model-name "${SERVED_MODEL}" \
     --max-concurrent-requests "${MAX_CONCURRENT_REQUESTS}" \
     --vllm-temperature "${DTGPT_VLLM_TEMPERATURE:-1.0}" \
-    --vllm-top-p "${DTGPT_VLLM_TOP_P:-0.9}"
+    --vllm-top-p "${DTGPT_VLLM_TOP_P:-0.9}" \
+    --vllm-total-max-length "${VLLM_TOTAL_MAX_LENGTH}" \
+    --vllm-minimum-max-tokens "${VLLM_MINIMUM_MAX_TOKENS}" \
+    "${DYNAMIC_MAX_TOKENS_FLAG[@]}" \
+    "${CONTINUE_ON_REQUEST_ERROR_FLAG[@]}"
 
 if command -v sbatch_post.sh >/dev/null 2>&1; then
     sbatch_post.sh

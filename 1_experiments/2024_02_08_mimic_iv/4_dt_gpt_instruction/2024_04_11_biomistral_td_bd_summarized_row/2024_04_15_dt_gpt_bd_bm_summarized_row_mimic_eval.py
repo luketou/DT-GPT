@@ -34,6 +34,10 @@ def build_parser():
     parser.add_argument("--max-concurrent-requests", type=int, default=int(os.environ.get("DTGPT_MAX_CONCURRENT_REQUESTS", "16")))
     parser.add_argument("--vllm-temperature", type=float, default=float(os.environ.get("DTGPT_VLLM_TEMPERATURE", "1.0")))
     parser.add_argument("--vllm-top-p", type=float, default=float(os.environ.get("DTGPT_VLLM_TOP_P", "0.9")))
+    parser.add_argument("--vllm-total-max-length", type=int, default=int(os.environ.get("DTGPT_VLLM_TOTAL_MAX_LENGTH", "4092")))
+    parser.add_argument("--vllm-dynamic-max-tokens", action="store_true", default=os.environ.get("DTGPT_VLLM_DYNAMIC_MAX_TOKENS", "1") in ["1", "true", "True", "yes", "YES"])
+    parser.add_argument("--vllm-minimum-max-tokens", type=int, default=int(os.environ.get("DTGPT_VLLM_MINIMUM_MAX_TOKENS", "1")))
+    parser.add_argument("--vllm-continue-on-request-error", action="store_true", default=os.environ.get("DTGPT_VLLM_CONTINUE_ON_REQUEST_ERROR", "0") in ["1", "true", "True", "yes", "YES"])
     return parser
 
 
@@ -75,6 +79,10 @@ def main():
         max_concurrent_requests=args.max_concurrent_requests,
         vllm_temperature=args.vllm_temperature,
         vllm_top_p=args.vllm_top_p,
+        vllm_total_max_length=args.vllm_total_max_length,
+        vllm_dynamic_max_tokens=args.vllm_dynamic_max_tokens,
+        vllm_minimum_max_tokens=args.vllm_minimum_max_tokens,
+        vllm_fail_on_request_error=not args.vllm_continue_on_request_error,
     )
 
 

@@ -63,6 +63,34 @@ def align_prediction_to_target_shape(predicted_df, target_shape_df, target_cols_
     return aligned_df
 
 
+def compute_vllm_max_tokens(
+    prompt,
+    tokenizer,
+    requested_max_new_tokens,
+    total_max_length,
+    dynamic_max_tokens,
+    minimum_max_tokens=1,
+):
+    """Return the vLLM output-token budget for one prompt.
+
+    HF generation in the original DT-GPT eval used a total `max_length`
+    budget. vLLM's OpenAI-compatible completions endpoint instead expects
+    output-only `max_tokens`, so dynamic mode converts total budget to
+    output budget per prompt.
+    """
+    if not dynamic_max_tokens:
+        return int(requested_max_new_tokens)
+
+    if tokenizer is None:
+        raise ValueError("tokenizer is required when dynamic_max_tokens=True")
+
+    tokenized_prompt = tokenizer(prompt, add_special_tokens=False)
+    prompt_token_count = len(tokenized_prompt.input_ids)
+    remaining_tokens = int(total_max_length) - prompt_token_count
+    bounded_remaining_tokens = max(int(minimum_max_tokens), remaining_tokens)
+    return min(int(requested_max_new_tokens), bounded_remaining_tokens)
+
+
 class Experiment:
 
     def __init__(self, experiment_name, experiment_class_name=None,  nickname=None, 
@@ -739,6 +767,11 @@ class Experiment:
                                               max_concurrent_requests=16,
                                               temperature=1.0,
                                               top_p=0.9,
+                                              tokenizer=None,
+                                              total_max_length=4092,
+                                              dynamic_max_tokens=False,
+                                              minimum_max_tokens=1,
+                                              fail_on_request_error=True,
                                               num_samples_to_generate=1,
                                               sample_merging_strategy="mean",
                                               max_new_tokens=None,
@@ -788,11 +821,20 @@ class Experiment:
                 }
 
                 for sample_idx in range(num_samples_to_generate):
+                    request_max_tokens = compute_vllm_max_tokens(
+                        prompt=str_input,
+                        tokenizer=tokenizer,
+                        requested_max_new_tokens=max_new_tokens,
+                        total_max_length=total_max_length,
+                        dynamic_max_tokens=dynamic_max_tokens,
+                        minimum_max_tokens=minimum_max_tokens,
+                    )
                     requests.append({
                         "patientid": patientid,
                         "patient_sample_index": patient_sample_index,
                         "prompt": str_input,
                         "seed": 8719 + (idx * max(num_samples_to_generate, 1)) + sample_idx,
+                        "max_tokens": request_max_tokens,
                     })
 
             except Exception:
@@ -815,6 +857,19 @@ class Experiment:
             target_df = target_dataframe.copy()
             target_df = target_df.dropna(axis=0, how='all', subset=target_df.columns.difference(["patientid", "patient_sample_index", "date"]))
             output_saving[patientid][patient_sample_index]["target_df"] = target_df
+
+        if requests:
+            request_token_budgets = [request["max_tokens"] for request in requests]
+            logging.info(
+                "vLLM max_tokens budget summary: min="
+                + str(min(request_token_budgets))
+                + ", max="
+                + str(max(request_token_budgets))
+                + ", dynamic="
+                + str(dynamic_max_tokens)
+                + ", total_max_length="
+                + str(total_max_length)
+            )
 
         async def generate_all():
             semaphore = asyncio.Semaphore(max_concurrent_requests)
@@ -850,17 +905,24 @@ class Experiment:
                             {
                                 "model": model_name,
                                 "prompt": request["prompt"],
-                                "max_tokens": max_new_tokens,
+                                "max_tokens": request["max_tokens"],
                                 "seed": request["seed"],
                                 "temperature": temperature,
                                 "top_p": top_p,
                             },
                         )
                         completion_text = response["choices"][0]["text"]
-                    except Exception:
+                    except Exception as exc:
                         traceback.print_exc()
                         failed_requests.append(request_idx + 1)
-                        logging.info("vLLM request failed.")
+                        logging.info(
+                            "vLLM request failed for index "
+                            + str(request_idx + 1)
+                            + " with max_tokens="
+                            + str(request["max_tokens"])
+                            + ": "
+                            + str(exc)
+                        )
                         completion_text = ""
 
                     # HF decoding returns prompt + completion. Preserve that shape because the
@@ -869,12 +931,15 @@ class Experiment:
 
             results = await asyncio.gather(*[generate_one(idx, request) for idx, request in enumerate(requests)])
             if failed_requests:
-                raise RuntimeError(
+                message = (
                     "vLLM generation failed for "
                     + str(len(failed_requests))
                     + " request(s); first failed request indices: "
                     + str(failed_requests[:20])
                 )
+                if fail_on_request_error:
+                    raise RuntimeError(message)
+                logging.warning(message + "; continuing with empty failed completions")
             return results
 
         if requests:
