@@ -54,6 +54,8 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
                 learning_rate=1e-5, batch_size_training=1, batch_size_validation=1, weight_decay=0.1, gradient_accumulation=1,
                 num_train_epochs=1.0, eval_interval=0.25, warmup_ratio=0.1, lr_scheduler="cosine", gradient_checkpointing=False,
                 logging_steps=10,
+                max_steps=-1,
+                resume_from_checkpoint=None,
                 nr_days_forecasting=91, seq_max_len_in_tokens=4000, decimal_precision=1,
                 gen_num_beams=1, gen_do_sample=False,
                 eval_model_path=None,
@@ -67,6 +69,7 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
                 use_unsloth=False,
                 deepspeed_config=None,
                 sft_dataset_num_proc=1,
+                df_conversion_n_jobs=None,
                 eval_backend="vllm",
                 eval_shard_index=0,
                 eval_num_shards=1,
@@ -277,7 +280,11 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
                                     x[5], x[6], x[7], x[8], constant_column_mapping) for x in training_events]
 
             # apply multiprocessing based DF to string conversion to speed up process
-            training_input_strings, training_target_strings, training_meta_data = process_all_tuples_multiprocessing(training_events, conversion_function)
+            training_input_strings, training_target_strings, training_meta_data = process_all_tuples_multiprocessing(
+                training_events,
+                conversion_function,
+                n_jobs=df_conversion_n_jobs,
+            )
 
             # Print one example
             logging.info("Example of input: " + training_input_strings[0])
@@ -298,7 +305,11 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
                                                         training_norm_filter.normalize_and_filter(x[4].copy(), None, replace_nan_rows=False, replace_missing_in_prediction=False, verbose=False)[0],
                                                         x[5], x[6], x[7], x[8], constant_column_mapping) for x in validation_events_for_tokenization]
 
-            validation_input_strings, validation_target_strings, validation_meta_data = process_all_tuples_multiprocessing(validation_events_for_tokenization, conversion_function)
+            validation_input_strings, validation_target_strings, validation_meta_data = process_all_tuples_multiprocessing(
+                validation_events_for_tokenization,
+                conversion_function,
+                n_jobs=df_conversion_n_jobs,
+            )
 
 
         ######################################################## SETUP DATA PROCESSOR ########################################################
@@ -406,6 +417,7 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
                 save_total_limit=2,
                 report_to="wandb" if is_main_process else "none",
                 load_best_model_at_end=True,
+                max_steps=max_steps,
                 seed=42,
             )
 
@@ -432,7 +444,14 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
 
 
             logging.info("Start training")
-            trainer.train()
+            if resume_from_checkpoint is not None:
+                resume_checkpoint_path = Path(resume_from_checkpoint)
+                if not resume_checkpoint_path.exists():
+                    raise FileNotFoundError(f"Resume checkpoint does not exist: {resume_checkpoint_path}")
+                logging.info("Resume training from checkpoint: %s", resume_checkpoint_path)
+                trainer.train(resume_from_checkpoint=str(resume_checkpoint_path))
+            else:
+                trainer.train()
 
             if use_lora:
                 finetune_model_path = build_lora_adapter_path(experiment.model_path)

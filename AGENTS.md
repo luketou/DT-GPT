@@ -7,7 +7,7 @@
 Test in conda dtgpt environment:
 
 ```bash
-conda activate dtgpt
+conda activate dtgpt-unsloth
 ```
 
 Run a specific experiment script directly, for example:
@@ -29,3 +29,6 @@ Recent history favors short, imperative commit messages such as `Fix: shifted ho
 
 ## Data & Configuration Notes
 Many scripts contain environment-specific filesystem paths and licensed-data assumptions. Do not commit secrets, access tokens, or private dataset extracts. If a change depends on local storage or external model hosting, call that out explicitly in the script header and PR description.
+
+## Structured Repo Context
+`repomix-output.xml` at `/home/r15543056/trajectory_forecast/DT-GPT/repomix-output.xml` is a structured repository snapshot generated for token-efficient codebase inspection. When a task needs broad repo context, prefer consulting this file first before reading many individual source files; fall back to direct file reads when exact current contents, line numbers, or recently modified files are required.

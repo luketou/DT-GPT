@@ -1,14 +1,14 @@
 #!/bin/bash
-#SBATCH --job-name="dtgpt-mimic-dora-vllm700"
+#SBATCH --job-name="dtgpt-mimic-dora-vllm1395"
 #SBATCH --partition=l40s
 #SBATCH --account=l40s
 #SBATCH --nodes=1
-#SBATCH --cpus-per-task=12
+#SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:1
 #SBATCH --time=1-0:0
 #SBATCH --array=0-7%4
-#SBATCH --output=logs/mimic_dora_vllm700_shard_%A_%a.out
-#SBATCH --error=logs/mimic_dora_vllm700_shard_%A_%a.err
+#SBATCH --output=logs/mimic_dora_vllm1395_shard_%A_%a.out
+#SBATCH --error=logs/mimic_dora_vllm1395_shard_%A_%a.err
 #SBATCH --chdir=/share/home/r15543056/trajectory_forecast/DT-GPT
 
 set -euo pipefail
@@ -46,7 +46,7 @@ mkdir -p "${HF_HOME}" "${TRITON_CACHE_DIR}" "${MPLCONFIGDIR}"
 if command -v conda >/dev/null 2>&1; then
     CONDA_BASE="$(conda info --base)"
     source "${CONDA_BASE}/etc/profile.d/conda.sh"
-    conda activate "${DTGPT_VLLM_CONDA_ENV:-LLMSelection-vllm}"
+    conda activate "${DTGPT_VLLM_CONDA_ENV:-dtgpt-vllm}"
     PYTHON_BIN="$(command -v python)"
 else
     echo "conda is not available in this job environment."
@@ -57,12 +57,12 @@ unset TRANSFORMERS_CACHE
 "${PYTHON_BIN}" -c "import vllm, openai, pandas, torch; print('vLLM env OK', getattr(vllm, '__version__', 'unknown'))"
 
 EVAL_SCRIPT="1_experiments/2024_02_08_mimic_iv/4_dt_gpt_instruction/2024_04_11_biomistral_td_bd_summarized_row/2024_04_15_dt_gpt_bd_bm_summarized_row_mimic_eval.py"
-CHECKPOINT_PATH="${DTGPT_EVAL_MODEL_PATH:-${REPO_ROOT}/3_results/raw_experiments/DT-GPTsetup/setup/2026_05_04___20_28_41_718957/models/checkpoint-700}"
-FULL_MODEL_PATH="${DTGPT_VLLM_FULL_MODEL_PATH:-${REPO_ROOT}/3_results/raw_experiments/DT-GPTsetup/setup/2026_05_04___20_28_41_718957/models/checkpoint-700-merged-vllm}"
+CHECKPOINT_PATH="${DTGPT_EVAL_MODEL_PATH:-${REPO_ROOT}/3_results/raw_experiments/DT-GPTsetup/setup/2026_05_05___16_46_44_938674/models/checkpoint-1395}"
+FULL_MODEL_PATH="${DTGPT_VLLM_FULL_MODEL_PATH:-${REPO_ROOT}/3_results/raw_experiments/DT-GPTsetup/setup/2026_05_05___16_46_44_938674/models/checkpoint-1395-merged-vllm}"
 export DTGPT_EVAL_NUM_SHARDS="${DTGPT_EVAL_NUM_SHARDS:-8}"
 export DTGPT_EVAL_SHARD_INDEX="${SLURM_ARRAY_TASK_ID:-${DTGPT_EVAL_SHARD_INDEX:-0}}"
 PORT="${DTGPT_VLLM_PORT:-$((18100 + DTGPT_EVAL_SHARD_INDEX))}"
-SERVED_MODEL="${DTGPT_VLLM_MODEL_NAME:-dtgpt_mimic_dora_checkpoint700}"
+SERVED_MODEL="${DTGPT_VLLM_MODEL_NAME:-dtgpt_mimic_dora_checkpoint1395}"
 SERVER_LOG="logs/mimic_dora_vllm_server_${SLURM_ARRAY_JOB_ID:-${SLURM_JOB_ID}}_${DTGPT_EVAL_SHARD_INDEX}.log"
 VLLM_MAX_MODEL_LEN="${DTGPT_VLLM_MAX_MODEL_LEN:-4096}"
 CLIENT_SEQ_MAX_LEN="${DTGPT_SEQ_MAX_LEN:-3400}"
@@ -160,7 +160,7 @@ if ! "${PYTHON_BIN}" -c "import urllib.request; urllib.request.urlopen('http://1
     exit 1
 fi
 
-conda activate "${DTGPT_CLIENT_CONDA_ENV:-dtgpt-unsloth}"
+conda activate "${DTGPT_CLIENT_CONDA_ENV:-dtgpt-vllm}"
 CLIENT_PYTHON_BIN="$(command -v python)"
 echo "Client Python binary: ${CLIENT_PYTHON_BIN}"
 

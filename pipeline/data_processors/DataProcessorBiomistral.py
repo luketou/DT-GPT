@@ -7,7 +7,6 @@ import numpy as np
 from transformers import AutoTokenizer, LongT5Model, DataCollatorForSeq2Seq, T5Tokenizer, DataCollatorForLanguageModeling
 from datasets import Dataset
 import re
-from trl import DataCollatorForCompletionOnlyLM
 
 
 class DataProcessorBiomistral():
@@ -264,6 +263,7 @@ class DataProcessorBiomistral():
             self.data_collator = DataCollatorForLanguageModeling(self.tokenizer, mlm=False)
 
         elif self.collator_setting == "completion":
+            from trl import DataCollatorForCompletionOnlyLM
             self.data_collator = DataCollatorForCompletionOnlyLM(self.response_template, tokenizer=self.tokenizer)
             
 

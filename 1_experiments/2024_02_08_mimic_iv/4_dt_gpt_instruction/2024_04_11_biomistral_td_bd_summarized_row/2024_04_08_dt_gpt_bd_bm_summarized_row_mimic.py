@@ -25,6 +25,8 @@ def build_parser():
     parser.add_argument("--validation-batch-size", type=int, default=10)
     parser.add_argument("--gradient-accumulation", type=int, default=1)
     parser.add_argument("--num-train-epochs", type=float, default=5)
+    parser.add_argument("--max-steps", type=int, default=-1)
+    parser.add_argument("--resume-from-checkpoint", type=str, default=None)
     parser.add_argument("--eval-interval", type=float, default=0.1)
     parser.add_argument("--warmup-ratio", type=float, default=0.10)
     parser.add_argument("--seq-max-len", type=int, default=3400)
@@ -47,6 +49,12 @@ def build_parser():
         type=int,
         default=1,
         help="Number of processes TRL should use for SFT dataset preprocessing.",
+    )
+    parser.add_argument(
+        "--df-conversion-n-jobs",
+        type=int,
+        default=None,
+        help="Number of joblib workers for DF-to-string conversion. Defaults to DTGPT_DF_CONVERSION_N_JOBS or 1.",
     )
     parser.add_argument("--deepspeed-config", type=str, default=None)
     parser.add_argument("--local-rank", "--local_rank", type=int, default=-1)
@@ -72,12 +80,15 @@ def main():
         weight_decay=0.1,
         gradient_accumulation=args.gradient_accumulation,
         num_train_epochs=args.num_train_epochs,
+        max_steps=args.max_steps,
+        resume_from_checkpoint=args.resume_from_checkpoint,
         eval_interval=args.eval_interval,
         warmup_ratio=args.warmup_ratio,
         lr_scheduler="cosine",
         gradient_checkpointing=args.gradient_checkpointing,
         logging_steps=args.logging_steps,
         sft_dataset_num_proc=args.sft_dataset_num_proc,
+        df_conversion_n_jobs=args.df_conversion_n_jobs,
         nr_days_forecasting=91,
         seq_max_len_in_tokens=args.seq_max_len,
         decimal_precision=args.decimal_precision,

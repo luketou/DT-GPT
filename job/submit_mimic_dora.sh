@@ -45,9 +45,10 @@ export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}"
 mkdir -p "${HF_HOME}" "${TRITON_CACHE_DIR}" "${MPLCONFIGDIR}"
 
 if command -v conda >/dev/null 2>&1; then
+    CONDA_ENV_NAME="${DTGPT_CONDA_ENV:-dtgpt-unsloth}"
     CONDA_BASE="$(conda info --base)"
     source "${CONDA_BASE}/etc/profile.d/conda.sh"
-    conda activate dtgpt-unsloth
+    conda activate "${CONDA_ENV_NAME}"
     PYTHON_BIN="$(command -v python)"
 else
     echo "conda is not available in this job environment."
@@ -81,6 +82,8 @@ TRAIN_BATCH_SIZE="${DTGPT_TRAIN_BATCH_SIZE:-1}"
 LORA_DROPOUT="${DTGPT_LORA_DROPOUT:-0.05}"
 DECIMAL_PRECISION="${DTGPT_DECIMAL_PRECISION:-1}"
 LOGGING_STEPS="${DTGPT_LOGGING_STEPS:-10}"
+MAX_STEPS="${DTGPT_MAX_STEPS:--1}"
+RESUME_FROM_CHECKPOINT="${DTGPT_RESUME_FROM_CHECKPOINT:-}"
 SAMPLE_MERGING_STRATEGY="${DTGPT_SAMPLE_MERGING_STRATEGY:-mean}"
 GRADIENT_CHECKPOINTING="${DTGPT_GRADIENT_CHECKPOINTING:-1}"
 USE_DORA="${DTGPT_USE_DORA:-1}"
@@ -95,6 +98,7 @@ SMOKE_CHECK_SCRIPT="1_experiments/2024_02_08_mimic_iv/4_dt_gpt_instruction/2024_
 DISTRIBUTED_SMOKE_CHECK_SCRIPT="job/check_torch_distributed_nccl.py"
 RUN_DISTRIBUTED_SMOKE_CHECK="${DTGPT_RUN_DISTRIBUTED_SMOKE_CHECK:-1}"
 SFT_DATASET_NUM_PROC="${DTGPT_SFT_DATASET_NUM_PROC:-1}"
+DF_CONVERSION_N_JOBS="${DTGPT_DF_CONVERSION_N_JOBS:-1}"
 RUN_SPLIT_SMOKE_CHECK="${DTGPT_RUN_SPLIT_SMOKE_CHECK:-1}"
 
 DEFAULT_SWEEP_CONFIGS=(
@@ -127,16 +131,22 @@ echo "MIMIC raw events dir: ${DTGPT_MIMIC_RAW_EVENTS_DIR}"
 echo "MIMIC raw stats path: ${DTGPT_MIMIC_RAW_STATS_PATH}"
 echo "Patient split fraction: ${DTGPT_PATIENT_SPLIT_FRACTION}"
 echo "Python binary: ${PYTHON_BIN}"
+echo "Conda env name: ${CONDA_ENV_NAME}"
 echo "Working directory: $(pwd)"
 echo "HF home: ${HF_HOME}"
 echo "Sequence max length: ${SEQ_MAX_LEN}"
 echo "Run timestamp: ${DTGPT_RUN_TIMESTAMP}"
 echo "SFT dataset num proc: ${SFT_DATASET_NUM_PROC}"
+echo "DF conversion joblib workers: ${DF_CONVERSION_N_JOBS}"
 echo "Train batch size per process: ${TRAIN_BATCH_SIZE}"
 echo "Validation batch size: ${VALIDATION_BATCH_SIZE}"
 echo "Generation samples per patient: ${NUM_SAMPLES_TO_GENERATE}"
 echo "Generation max new tokens: ${MAX_NEW_TOKENS}"
 echo "LoRA dropout: ${LORA_DROPOUT}"
+echo "Max training steps: ${MAX_STEPS}"
+if [ -n "${RESUME_FROM_CHECKPOINT}" ]; then
+    echo "Resume from checkpoint: ${RESUME_FROM_CHECKPOINT}"
+fi
 echo "Distributed smoke check: ${RUN_DISTRIBUTED_SMOKE_CHECK}"
 echo "Split smoke check: ${RUN_SPLIT_SMOKE_CHECK}"
 if [ "${USE_DISTRIBUTED}" = "1" ]; then
@@ -218,6 +228,7 @@ for raw_config in "${SWEEP_CONFIGS[@]}"; do
     DORA_FLAG=()
     UNSLOTH_FLAG=()
     GRADIENT_CHECKPOINTING_FLAG=()
+    RESUME_FLAG=()
     RUNNER=("${PYTHON_BIN}")
     if [ "${USE_DORA}" = "1" ]; then
         DORA_FLAG=(--use-dora)
@@ -227,6 +238,9 @@ for raw_config in "${SWEEP_CONFIGS[@]}"; do
     fi
     if [ "${GRADIENT_CHECKPOINTING}" = "1" ]; then
         GRADIENT_CHECKPOINTING_FLAG=(--gradient-checkpointing)
+    fi
+    if [ -n "${RESUME_FROM_CHECKPOINT}" ]; then
+        RESUME_FLAG=(--resume-from-checkpoint "${RESUME_FROM_CHECKPOINT}")
     fi
     if [ "${USE_DEEPSPEED}" = "1" ]; then
         DEEPSPEED_FLAG=(--deepspeed-config "${DEEPSPEED_CONFIG}")
@@ -249,13 +263,16 @@ for raw_config in "${SWEEP_CONFIGS[@]}"; do
         --validation-batch-size "${VALIDATION_BATCH_SIZE}" \
         --gradient-accumulation "${gradient_accumulation}" \
         --num-train-epochs "${num_train_epochs}" \
+        --max-steps "${MAX_STEPS}" \
+        "${RESUME_FLAG[@]}" \
         --seq-max-len "${SEQ_MAX_LEN}" \
         --decimal-precision "${DECIMAL_PRECISION}" \
         --num-samples-to-generate "${NUM_SAMPLES_TO_GENERATE}" \
         --sample-merging-strategy "${SAMPLE_MERGING_STRATEGY}" \
         --max-new-tokens-to-generate "${MAX_NEW_TOKENS}" \
         --logging-steps "${LOGGING_STEPS}" \
-        --sft-dataset-num-proc "${SFT_DATASET_NUM_PROC}"; then
+        --sft-dataset-num-proc "${SFT_DATASET_NUM_PROC}" \
+        --df-conversion-n-jobs "${DF_CONVERSION_N_JOBS}"; then
         print_header "Failed ${run_label}"
         exit 1
     fi
