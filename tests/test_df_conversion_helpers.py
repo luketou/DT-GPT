@@ -1,75 +1,57 @@
-import os
-import unittest
-from unittest.mock import patch
+import logging
 
-from pipeline import DFConversionHelpers as helpers
+import pytest
 
-
-class TestDFConversionWorkerResolution(unittest.TestCase):
-    def test_defaults_to_single_worker_when_unset(self):
-        with patch.dict(os.environ, {}, clear=True):
-            self.assertEqual(helpers.resolve_df_conversion_n_jobs(), 1)
-
-    def test_uses_positive_integer_from_environment(self):
-        with patch.dict(os.environ, {"DTGPT_DF_CONVERSION_N_JOBS": "2"}, clear=True):
-            self.assertEqual(helpers.resolve_df_conversion_n_jobs(), 2)
-
-    def test_rejects_zero_from_environment(self):
-        with patch.dict(os.environ, {"DTGPT_DF_CONVERSION_N_JOBS": "0"}, clear=True):
-            with self.assertRaisesRegex(ValueError, "DTGPT_DF_CONVERSION_N_JOBS"):
-                helpers.resolve_df_conversion_n_jobs()
-
-    def test_rejects_non_integer_from_environment(self):
-        with patch.dict(os.environ, {"DTGPT_DF_CONVERSION_N_JOBS": "abc"}, clear=True):
-            with self.assertRaisesRegex(ValueError, "DTGPT_DF_CONVERSION_N_JOBS"):
-                helpers.resolve_df_conversion_n_jobs()
-
-    def test_explicit_argument_overrides_environment(self):
-        with patch.dict(os.environ, {"DTGPT_DF_CONVERSION_N_JOBS": "4"}, clear=True):
-            self.assertEqual(helpers.resolve_df_conversion_n_jobs(2), 2)
+from pipeline.DFConversionHelpers import (
+    iter_converted_tuples,
+    log_memory_usage,
+    process_all_tuples_multiprocessing,
+    resolve_df_conversion_n_jobs,
+)
 
 
-class _FakeParallel:
-    last_n_jobs = None
-
-    def __init__(self, n_jobs):
-        _FakeParallel.last_n_jobs = n_jobs
-
-    def __call__(self, delayed_calls):
-        return [call() for call in delayed_calls]
+def test_resolve_df_conversion_n_jobs_rejects_zero():
+    with pytest.raises(ValueError, match="positive integer"):
+        resolve_df_conversion_n_jobs(0)
 
 
-class _FakeDelayedCall:
-    def __init__(self, func, args):
-        self.func = func
-        self.args = args
+def test_iter_converted_tuples_preserves_order_and_metadata(caplog):
+    def convert(value):
+        return f"input-{value}", f"target-{value}", {"idx": value}
 
-    def __call__(self):
-        return self.func(*self.args)
+    caplog.set_level(logging.INFO)
 
+    records = list(iter_converted_tuples([(1,), (2,), (3,)], convert, log_every=2))
 
-def _fake_delayed(func):
-    def wrapper(*args):
-        return _FakeDelayedCall(func, args)
-    return wrapper
-
-
-def _convert(value):
-    return f"input-{value}", f"target-{value}", {"value": value}
+    assert records == [
+        {"input_text": "input-1", "target_text": "target-1", "meta_data": {"idx": 1}},
+        {"input_text": "input-2", "target_text": "target-2", "meta_data": {"idx": 2}},
+        {"input_text": "input-3", "target_text": "target-3", "meta_data": {"idx": 3}},
+    ]
+    assert "Converting DFs to Strings: 2 / 3" in caplog.text
 
 
-class TestProcessAllTuplesMultiprocessing(unittest.TestCase):
-    def test_passes_resolved_worker_count_to_joblib(self):
-        _FakeParallel.last_n_jobs = None
-        with patch.dict(os.environ, {"DTGPT_DF_CONVERSION_N_JOBS": "2"}, clear=True):
-            with patch.object(helpers, "Parallel", _FakeParallel), patch.object(helpers, "delayed", _fake_delayed):
-                inputs, targets, metas = helpers.process_all_tuples_multiprocessing([(1,), (2,)], _convert)
+def test_process_all_tuples_multiprocessing_uses_streaming_path_for_one_worker(monkeypatch):
+    def fail_if_joblib_parallel_is_called(*args, **kwargs):
+        raise AssertionError("joblib Parallel must not be used for n_jobs=1")
 
-        self.assertEqual(_FakeParallel.last_n_jobs, 2)
-        self.assertEqual(inputs, ("input-1", "input-2"))
-        self.assertEqual(targets, ("target-1", "target-2"))
-        self.assertEqual(metas, ({"value": 1}, {"value": 2}))
+    def convert(value):
+        return f"input-{value}", f"target-{value}", {"idx": value}
+
+    monkeypatch.setattr("pipeline.DFConversionHelpers.Parallel", fail_if_joblib_parallel_is_called)
+
+    input_strings, target_strings, meta_data = process_all_tuples_multiprocessing(
+        [(1,), (2,)],
+        convert,
+        n_jobs=1,
+    )
+
+    assert input_strings == ["input-1", "input-2"]
+    assert target_strings == ["target-1", "target-2"]
+    assert meta_data == [{"idx": 1}, {"idx": 2}]
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_log_memory_usage_does_not_fail_without_psutil(caplog):
+    caplog.set_level(logging.INFO)
+    log_memory_usage("unit-test")
+    assert "unit-test" in caplog.text
