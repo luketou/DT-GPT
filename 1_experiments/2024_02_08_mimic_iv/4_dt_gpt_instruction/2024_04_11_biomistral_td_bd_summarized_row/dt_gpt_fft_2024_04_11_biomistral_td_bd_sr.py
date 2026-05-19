@@ -13,7 +13,7 @@ import wandb
 import pandas as pd
 import logging
 from pipeline.data_generators.DataFrameConvertTDBDMIMIC import DTGPTDataFrameConverterTemplateTextBasicDescriptionMIMIC
-from pipeline.DFConversionHelpers import process_all_tuples_multiprocessing
+from pipeline.DFConversionHelpers import iter_converted_tuples, log_memory_usage, process_all_tuples_multiprocessing
 from pipeline.data_processors.DataProcessorBiomistral import DataProcessorBiomistral
 from pipeline.NormalizationFilterManager import Only_Double3_sigma_Filtering
 import torch
@@ -140,6 +140,7 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
         training_full_constants, training_full_events = eval_manager.load_list_of_patient_dfs_and_constants(training_full_patientids)
         validation_full_constants, validation_full_events = eval_manager.load_list_of_patient_dfs_and_constants(validation_full_patientids)
         test_full_constants, test_full_events = eval_manager.load_list_of_patient_dfs_and_constants(test_full_patientids)
+        log_memory_usage("after-loading-train-validation-test-dfs")
 
         # Setup splitter object
         splitter = After24HSplitter()
@@ -171,6 +172,10 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
             test_events_full_count,
             eval_max_samples,
         )
+        del training_full_paths, validation_full_paths, test_full_paths
+        del test_full_constants
+        gc.collect()
+        log_memory_usage("after-splitting-and-dropping-unused-paths")
 
         path_to_statistics_file = str(get_mimic_dataset_statistics_path())
         with open(path_to_statistics_file) as f:
@@ -279,19 +284,16 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
                                     training_norm_filter.normalize_and_filter(x[4].copy(), None, replace_nan_rows=False, replace_missing_in_prediction=False, verbose=False)[0],
                                     x[5], x[6], x[7], x[8], constant_column_mapping) for x in training_events]
 
-            # apply multiprocessing based DF to string conversion to speed up process
-            training_input_strings, training_target_strings, training_meta_data = process_all_tuples_multiprocessing(
-                training_events,
-                conversion_function,
-                n_jobs=df_conversion_n_jobs,
-            )
-
-            # Print one example
-            logging.info("Example of input: " + training_input_strings[0])
-            logging.info("Example of target: " + training_target_strings[0])
-
-            logging.info("Example of input: " + training_input_strings[1])
-            logging.info("Example of target: " + training_target_strings[1])
+            training_records = list(iter_converted_tuples(training_events, conversion_function, log_every=100))
+            if len(training_records) >= 2:
+                logging.info("Example of input: " + training_records[0]["input_text"])
+                logging.info("Example of target: " + training_records[0]["target_text"])
+                logging.info("Example of input: " + training_records[1]["input_text"])
+                logging.info("Example of target: " + training_records[1]["target_text"])
+            del training_events
+            del training_full_constants, training_full_events
+            gc.collect()
+            log_memory_usage("after-training-string-conversion-and-raw-train-free")
 
 
             # apply for validation data
@@ -305,11 +307,11 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
                                                         training_norm_filter.normalize_and_filter(x[4].copy(), None, replace_nan_rows=False, replace_missing_in_prediction=False, verbose=False)[0],
                                                         x[5], x[6], x[7], x[8], constant_column_mapping) for x in validation_events_for_tokenization]
 
-            validation_input_strings, validation_target_strings, validation_meta_data = process_all_tuples_multiprocessing(
-                validation_events_for_tokenization,
-                conversion_function,
-                n_jobs=df_conversion_n_jobs,
-            )
+            validation_records = list(iter_converted_tuples(validation_events_for_tokenization, conversion_function, log_every=100))
+            del validation_events_for_tokenization
+            del validation_full_constants, validation_full_events
+            gc.collect()
+            log_memory_usage("after-validation-string-conversion-and-raw-validation-free")
 
 
         ######################################################## SETUP DATA PROCESSOR ########################################################
@@ -329,10 +331,15 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
 
         if eval_model_path is None:
             tokenize = True
-            training_dataset = dp.preprocess_dataset(training_input_strings, training_target_strings, tokenize=tokenize)
+            training_dataset = dp.preprocess_converted_records(training_records, tokenize=tokenize, keep_text_columns=False)
+            del training_records
+            gc.collect()
+            log_memory_usage("after-training-tokenization-and-record-free")
 
-            # Tokenize validation dataset
-            validation_dataset = dp.preprocess_dataset(validation_input_strings, validation_target_strings, tokenize=tokenize)
+            validation_dataset = dp.preprocess_converted_records(validation_records, tokenize=tokenize, keep_text_columns=False)
+            del validation_records
+            gc.collect()
+            log_memory_usage("after-validation-tokenization-and-record-free")
 
 
             ######################################################## SETUP MODEL ########################################################
