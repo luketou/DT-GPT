@@ -3,7 +3,7 @@
 #SBATCH --partition=l40s
 #SBATCH --account=l40s
 #SBATCH --nodes=1
-#SBATCH --nodelist=node201
+#SBATCH --nodelist=node-201
 #SBATCH --cpus-per-task=16
 #SBATCH --gres=gpu:2
 #SBATCH --mem=160G
@@ -50,7 +50,7 @@ fi
 echo "Resume checkpoint: ${DTGPT_RESUME_FROM_CHECKPOINT}"
 echo "Conda env: ${DTGPT_CONDA_ENV}"
 echo "Target max global step: ${DTGPT_MAX_STEPS}"
-echo "Reserved node: node201"
+echo "Reserved node: node-201"
 echo "GPUs requested: 2 L40S; distributed processes: ${DTGPT_NPROC_PER_NODE}"
 echo "Training mode: standard PEFT DoRA + DeepSpeed; Unsloth disabled because this repo blocks Unsloth distributed training"
 echo "Requested CPU memory: 160G because current failure occurs during CPU DF-to-string conversion before model setup"
