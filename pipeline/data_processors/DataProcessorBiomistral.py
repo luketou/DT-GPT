@@ -74,6 +74,45 @@ class DataProcessorBiomistral():
         l = self._preprocess_dic(list_of_input_strings, list_of_target_strings, tokenize=tokenize)
         return l
     
+    def preprocess_converted_records(self, converted_records, tokenize=True, keep_text_columns=False):
+        logging.info("DataProcessor: building dataset from converted records")
+        curr_dataset = Dataset.from_list(list(converted_records))
+
+        if "meta_data" in curr_dataset.column_names:
+            curr_dataset = curr_dataset.remove_columns(["meta_data"])
+
+        def preprocess_function(samples):
+            inputs = self.preprocess_inputs(samples["input_text"])
+            targets = self.preprocess_outputs(samples["target_text"])
+            concat_text = [str(input_text) + " " + str(target_text) for input_text, target_text in zip(inputs, targets)]
+
+            if tokenize:
+                model_inputs = self.tokenizer(
+                    text=concat_text,
+                    max_length=self.max_total_length,
+                    truncation=True,
+                )
+            else:
+                model_inputs = {}
+
+            if keep_text_columns:
+                model_inputs["input_text"] = inputs
+                model_inputs["target_text"] = targets
+
+            model_inputs["concatenated_text"] = concat_text
+            return model_inputs
+
+        remove_columns = [] if keep_text_columns else [
+            column_name for column_name in ["input_text", "target_text"] if column_name in curr_dataset.column_names
+        ]
+        tokenized_dataset = curr_dataset.map(
+            preprocess_function,
+            batched=True,
+            remove_columns=remove_columns,
+        )
+        logging.info("DataProcessor: finished building dataset from converted records")
+        return tokenized_dataset
+
     def _preprocess_dic(self, list_of_input_strings, list_of_target_strings, tokenize):
         
         # : see https://discuss.huggingface.co/t/longt5-fine-tunning/22650
