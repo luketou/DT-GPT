@@ -12,7 +12,7 @@ from trl import DataCollatorForCompletionOnlyLM
 import os
 from transformers import AutoModelForCausalLM
 import torch
-from transformers import TrainingArguments
+from pipeline.hf_training_args import create_training_arguments
 from trl import SFTTrainer
 import gc
 from pipeline.Experiment import Experiment
@@ -185,7 +185,7 @@ def run_training(num_validation_samples=50,
     eval_num_steps = 1.0 / num_train_epochs
     
     # train model
-    train_params = TrainingArguments(
+    train_params = create_training_arguments(
         output_dir=experiment.model_path,
         per_device_train_batch_size=BATCH_SIZE_TRAINING,
         per_device_eval_batch_size=BATCH_SIZE_TRAINING if num_validation_samples > 0 else None,

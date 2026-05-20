@@ -18,7 +18,7 @@ from pipeline.data_processors.DataProcessorBiomistral import DataProcessorBiomis
 from pipeline.NormalizationFilterManager import Only_Double3_sigma_Filtering
 import torch
 from transformers import AutoModelForCausalLM
-from transformers import TrainingArguments
+from pipeline.hf_training_args import create_training_arguments
 import gc
 from pipeline.NormalizationFilterManager import Only_Double3_sigma_Filtering
 from pipeline.MetricManager import MetricManager
@@ -396,7 +396,7 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
             data_collator = dp.get_collator(model)
 
 
-            train_params = TrainingArguments(
+            train_params = create_training_arguments(
                 output_dir=experiment.model_path,
                 per_device_train_batch_size=BATCH_SIZE_TRAINING,
                 per_device_eval_batch_size=BATCH_SIZE_TRAINING,
