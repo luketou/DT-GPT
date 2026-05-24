@@ -48,3 +48,47 @@ def test_check_vllm_endpoint_accepts_models_response(monkeypatch):
     monkeypatch.setattr("urllib.request.urlopen", ok_urlopen)
 
     assert check_vllm_endpoint("http://127.0.0.1:18101/v1/", timeout=1) == ["local-model"]
+
+
+def test_check_vllm_endpoint_rejects_empty_models(monkeypatch):
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps({"data": []}).encode("utf-8")
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda request, timeout: FakeResponse())
+
+    with pytest.raises(VLLMEndpointError) as excinfo:
+        check_vllm_endpoint("http://127.0.0.1:18101/v1/", timeout=1)
+
+    assert "did not report any model IDs" in str(excinfo.value)
+
+
+def test_check_vllm_endpoint_rejects_missing_expected_model(monkeypatch):
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps({"data": [{"id": "other-model"}]}).encode("utf-8")
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda request, timeout: FakeResponse())
+
+    with pytest.raises(VLLMEndpointError) as excinfo:
+        check_vllm_endpoint(
+            "http://127.0.0.1:18101/v1/",
+            timeout=1,
+            expected_model_name="local-model",
+        )
+
+    message = str(excinfo.value)
+    assert "does not serve requested model 'local-model'" in message
+    assert "other-model" in message

@@ -16,7 +16,7 @@ def _authorization_header():
     return "Bearer " + os.environ.get("DTGPT_VLLM_API_KEY", "token-abc123")
 
 
-def check_vllm_endpoint(prediction_url, timeout=10):
+def check_vllm_endpoint(prediction_url, timeout=10, expected_model_name=None):
     models_url = build_vllm_url(prediction_url, "models")
     request = urllib.request.Request(
         models_url,
@@ -31,13 +31,32 @@ def check_vllm_endpoint(prediction_url, timeout=10):
         raise VLLMEndpointError(
             f"vLLM endpoint is not usable at {models_url}: HTTP {error.code}: {error_body}"
         ) from error
-    except Exception as error:
+    except urllib.error.URLError as error:
         raise VLLMEndpointError(
             f"vLLM endpoint is not reachable at {models_url}: {error}. "
             "Start the vLLM OpenAI server on this host/port or pass --prediction-url."
         ) from error
+    except Exception as error:
+        raise VLLMEndpointError(
+            f"vLLM endpoint returned an invalid /models response at {models_url}: {error}"
+        ) from error
 
-    return [model.get("id") for model in body.get("data", []) if isinstance(model, dict) and model.get("id")]
+    if not isinstance(body, dict) or not isinstance(body.get("data"), list):
+        raise VLLMEndpointError(
+            f"vLLM endpoint returned an invalid /models response at {models_url}: expected a JSON object with a data list."
+        )
+
+    model_ids = [model.get("id") for model in body["data"] if isinstance(model, dict) and model.get("id")]
+    if not model_ids:
+        raise VLLMEndpointError(
+            f"vLLM endpoint is reachable at {models_url}, but it did not report any model IDs."
+        )
+    if expected_model_name is not None and expected_model_name not in model_ids:
+        raise VLLMEndpointError(
+            f"vLLM endpoint at {models_url} does not serve requested model {expected_model_name!r}; "
+            f"available models: {model_ids}"
+        )
+    return model_ids
 
 
 def post_vllm_completion(prediction_url, payload, timeout=600):

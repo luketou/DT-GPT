@@ -39,6 +39,13 @@ if not hasattr(argparse, "BooleanOptionalAction"):
     argparse.BooleanOptionalAction = _BooleanOptionalAction
 
 
+def positive_int(value):
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be >= 1")
+    return parsed
+
+
 def build_parser():
     parser = argparse.ArgumentParser(description="Train DT-GPT on MIMIC-IV with BioMistral.")
     parser.add_argument("--debug", action="store_true", help="Disable WandB logging.")
@@ -82,7 +89,7 @@ def build_parser():
     parser.add_argument("--local-rank", "--local_rank", type=int, default=-1)
     parser.add_argument("--prediction-url", type=str, default="http://127.0.0.1:18101/v1/")
     parser.add_argument("--vllm-model-name", type=str, default=None)
-    parser.add_argument("--max-concurrent-requests", type=int, default=16)
+    parser.add_argument("--max-concurrent-requests", type=positive_int, default=16)
     parser.add_argument("--vllm-fail-on-request-error", action=argparse.BooleanOptionalAction, default=True)
     return parser
 

@@ -924,7 +924,7 @@ class Experiment:
             return results
 
         if requests:
-            available_models = check_vllm_endpoint(prediction_url)
+            available_models = check_vllm_endpoint(prediction_url, expected_model_name=model_name)
             logging.info(
                 "vLLM endpoint preflight passed for "
                 + str(prediction_url)
