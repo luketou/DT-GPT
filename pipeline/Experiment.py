@@ -778,8 +778,7 @@ class Experiment:
                                               output_string_filtering_function=None,
                                               return_meta_data=False,
                                               verbose=False):
-        import urllib.error
-        import urllib.request
+        from pipeline.vllm_client import check_vllm_endpoint, post_vllm_completion
 
         eval_manager.evaluate_split_stream_start()
 
@@ -873,28 +872,10 @@ class Experiment:
 
         async def generate_all():
             semaphore = asyncio.Semaphore(max_concurrent_requests)
-            completions_url = prediction_url.rstrip("/") + "/completions"
             failed_requests = []
 
             def post_completion(payload):
-                encoded_payload = json.dumps(payload).encode("utf-8")
-                request = urllib.request.Request(
-                    completions_url,
-                    data=encoded_payload,
-                    headers={
-                        "Content-Type": "application/json",
-                        "Authorization": "Bearer " + os.environ.get("DTGPT_VLLM_API_KEY", "token-abc123"),
-                    },
-                    method="POST",
-                )
-                try:
-                    with urllib.request.urlopen(request, timeout=600) as response:
-                        return json.loads(response.read().decode("utf-8"))
-                except urllib.error.HTTPError as error:
-                    error_body = error.read().decode("utf-8", errors="replace")
-                    raise RuntimeError(
-                        f"vLLM HTTP {error.code} for {completions_url}: {error_body}"
-                    ) from error
+                return post_vllm_completion(prediction_url, payload, timeout=600)
 
             async def generate_one(request_idx, request):
                 async with semaphore:
@@ -943,6 +924,13 @@ class Experiment:
             return results
 
         if requests:
+            available_models = check_vllm_endpoint(prediction_url, expected_model_name=model_name)
+            logging.info(
+                "vLLM endpoint preflight passed for "
+                + str(prediction_url)
+                + "; available models: "
+                + str(available_models)
+            )
             for patientid, patient_sample_index, prediction_str in asyncio.run(generate_all()):
                 output_saving[patientid][patient_sample_index]["generated_predictions"].append(prediction_str)
 

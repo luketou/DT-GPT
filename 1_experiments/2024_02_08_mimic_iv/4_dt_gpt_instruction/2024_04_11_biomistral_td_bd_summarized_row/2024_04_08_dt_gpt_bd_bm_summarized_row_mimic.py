@@ -16,6 +16,35 @@ from dt_gpt_fft_2024_04_11_biomistral_td_bd_sr import DTGPT_mimic_biomistral_fft
 
 ensure_runtime_cache_env()
 
+if not hasattr(argparse, "BooleanOptionalAction"):
+    class _BooleanOptionalAction(argparse.Action):
+        def __init__(self, option_strings, dest, default=None, **kwargs):
+            option_strings = list(option_strings)
+            extended_option_strings = []
+            for option_string in option_strings:
+                extended_option_strings.append(option_string)
+                if option_string.startswith("--"):
+                    extended_option_strings.append("--no-" + option_string[2:])
+            super().__init__(
+                option_strings=extended_option_strings,
+                dest=dest,
+                nargs=0,
+                default=default,
+                **kwargs,
+            )
+
+        def __call__(self, parser, namespace, values, option_string=None):
+            setattr(namespace, self.dest, not option_string.startswith("--no-"))
+
+    argparse.BooleanOptionalAction = _BooleanOptionalAction
+
+
+def positive_int(value):
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be >= 1")
+    return parsed
+
 
 def build_parser():
     parser = argparse.ArgumentParser(description="Train DT-GPT on MIMIC-IV with BioMistral.")
@@ -58,6 +87,10 @@ def build_parser():
     )
     parser.add_argument("--deepspeed-config", type=str, default=None)
     parser.add_argument("--local-rank", "--local_rank", type=int, default=-1)
+    parser.add_argument("--prediction-url", type=str, default="http://127.0.0.1:18101/v1/")
+    parser.add_argument("--vllm-model-name", type=str, default=None)
+    parser.add_argument("--max-concurrent-requests", type=positive_int, default=16)
+    parser.add_argument("--vllm-fail-on-request-error", action=argparse.BooleanOptionalAction, default=True)
     return parser
 
 
@@ -102,6 +135,10 @@ def main():
         use_dora=args.use_dora or args.use_unsloth,
         use_unsloth=args.use_unsloth,
         deepspeed_config=args.deepspeed_config,
+        prediction_url=args.prediction_url,
+        vllm_model_name=args.vllm_model_name,
+        max_concurrent_requests=args.max_concurrent_requests,
+        vllm_fail_on_request_error=args.vllm_fail_on_request_error,
     )
 
 
