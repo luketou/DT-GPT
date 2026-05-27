@@ -1,12 +1,92 @@
 import __init__  # Do all imports
 import logging
-import wandb
 import pandas as pd
 import json
 import numpy as np
+import torch
 from transformers import AutoTokenizer, LongT5Model, DataCollatorForSeq2Seq, T5Tokenizer, DataCollatorForLanguageModeling
 from datasets import Dataset
 import re
+
+
+class CompletionOnlyDataCollator:
+    """Pad causal-LM batches and compute loss only after a response template.
+
+    This replaces TRL's removed completion-only collator for the repository's
+    prompt format:
+
+        <prompt text> <patient_prediction><target JSON>
+
+    Labels before and including ``response_template`` are set to ``-100``.
+    Padding labels are also set to ``-100``.
+    """
+
+    def __init__(self, response_template, tokenizer, label_pad_token_id=-100):
+        self.response_template = response_template
+        self.tokenizer = tokenizer
+        self.label_pad_token_id = label_pad_token_id
+        self.response_token_ids = tokenizer(
+            response_template,
+            add_special_tokens=False,
+        )["input_ids"]
+
+        if not self.response_token_ids:
+            raise ValueError("response_template tokenized to an empty token list")
+
+    def __call__(self, features):
+        input_ids = [list(feature["input_ids"]) for feature in features]
+        attention_masks = [
+            list(feature.get("attention_mask", [1] * len(feature["input_ids"])))
+            for feature in features
+        ]
+        completion_masks = [self._build_completion_mask(ids) for ids in input_ids]
+
+        max_length = max(len(ids) for ids in input_ids)
+        padded_input_ids = []
+        padded_attention_masks = []
+        padded_completion_masks = []
+
+        for ids, attention_mask, completion_mask in zip(input_ids, attention_masks, completion_masks):
+            pad_length = max_length - len(ids)
+            if getattr(self.tokenizer, "padding_side", "right") == "left":
+                padded_input_ids.append([self.tokenizer.pad_token_id] * pad_length + ids)
+                padded_attention_masks.append([0] * pad_length + attention_mask)
+                padded_completion_masks.append([0] * pad_length + completion_mask)
+            else:
+                padded_input_ids.append(ids + [self.tokenizer.pad_token_id] * pad_length)
+                padded_attention_masks.append(attention_mask + [0] * pad_length)
+                padded_completion_masks.append(completion_mask + [0] * pad_length)
+
+        batch = {
+            "input_ids": torch.tensor(padded_input_ids, dtype=torch.long),
+            "attention_mask": torch.tensor(padded_attention_masks, dtype=torch.long),
+        }
+        completion_mask_tensor = torch.tensor(padded_completion_masks, dtype=torch.bool)
+        labels = batch["input_ids"].clone()
+        labels[batch["attention_mask"] == 0] = self.label_pad_token_id
+        labels[~completion_mask_tensor] = self.label_pad_token_id
+        batch["labels"] = labels
+        return batch
+
+    def _build_completion_mask(self, input_ids):
+        response_start = self._find_subsequence(input_ids, self.response_token_ids)
+        if response_start is None:
+            logging.warning(
+                "Response template %r was not found in tokenized sample; masking all labels.",
+                self.response_template,
+            )
+            return [0] * len(input_ids)
+
+        response_end = response_start + len(self.response_token_ids)
+        return [0] * response_end + [1] * (len(input_ids) - response_end)
+
+    @staticmethod
+    def _find_subsequence(sequence, subsequence):
+        max_start = len(sequence) - len(subsequence)
+        for start in range(max_start + 1):
+            if sequence[start:start + len(subsequence)] == subsequence:
+                return start
+        return None
 
 
 class DataProcessorBiomistral():
@@ -302,8 +382,7 @@ class DataProcessorBiomistral():
             self.data_collator = DataCollatorForLanguageModeling(self.tokenizer, mlm=False)
 
         elif self.collator_setting == "completion":
-            from trl import DataCollatorForCompletionOnlyLM
-            self.data_collator = DataCollatorForCompletionOnlyLM(self.response_template, tokenizer=self.tokenizer)
+            self.data_collator = CompletionOnlyDataCollator(self.response_template, tokenizer=self.tokenizer)
             
 
         return self.data_collator

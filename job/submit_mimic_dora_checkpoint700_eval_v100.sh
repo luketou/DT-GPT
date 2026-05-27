@@ -1,13 +1,13 @@
 #!/bin/bash
-#SBATCH --job-name="dtgpt-mimic-dora-eval700"
-#SBATCH --partition=l40s
-#SBATCH --account=l40s
+#SBATCH --job-name="dtgpt-mimic-dora-eval700-v100"
+#SBATCH --partition=v100-32g
+#SBATCH --account=v100-32g
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:1
-#SBATCH --time=7-0:0
-#SBATCH --output=logs/mimic_dora_eval700_%j.out
-#SBATCH --error=logs/mimic_dora_eval700_%j.err
+#SBATCH --time=1-0:0
+#SBATCH --output=logs/mimic_dora_eval700_v100_%j.out
+#SBATCH --error=logs/mimic_dora_eval700_v100_%j.err
 #SBATCH --chdir=/share/home/r15543056/trajectory_forecast/DT-GPT
 
 set -euo pipefail
@@ -55,7 +55,7 @@ fi
 unset TRANSFORMERS_CACHE
 
 EVAL_SCRIPT="1_experiments/2024_02_08_mimic_iv/4_dt_gpt_instruction/2024_04_11_biomistral_td_bd_summarized_row/2024_04_15_dt_gpt_bd_bm_summarized_row_mimic_eval.py"
-CHECKPOINT_PATH="${DTGPT_EVAL_MODEL_PATH:-${REPO_ROOT}/3_results/raw_experiments/DT-GPTsetup/setup/2026_05_04___20_28_41_718957/models/checkpoint-700}"
+CHECKPOINT_PATH="${DTGPT_EVAL_MODEL_PATH:-${REPO_ROOT}/3_results/raw_experiments/DT-GPTsetup/setup/2026_05_25___05_26_25_581995/models/checkpoint-1674-for-eval}"
 
 echo "Python binary: ${PYTHON_BIN}"
 echo "Conda environment: ${CONDA_ENV_NAME}"
@@ -72,7 +72,7 @@ echo "HF home: ${HF_HOME}"
     --validation-batch-size "${DTGPT_VALIDATION_BATCH_SIZE:-1}" \
     --seq-max-len "${DTGPT_SEQ_MAX_LEN:-6000}" \
     --num-samples-to-generate "${DTGPT_NUM_SAMPLES_TO_GENERATE:-1}" \
-    --max-new-tokens-to-generate "${DTGPT_MAX_NEW_TOKENS:-256}" \
+    --max-new-tokens-to-generate "${DTGPT_MAX_NEW_TOKENS:-1024}" \
     --eval-backend "${DTGPT_EVAL_BACKEND:-hf}" \
     --eval-shard-index "${DTGPT_EVAL_SHARD_INDEX:-0}" \
     --eval-num-shards "${DTGPT_EVAL_NUM_SHARDS:-1}" \

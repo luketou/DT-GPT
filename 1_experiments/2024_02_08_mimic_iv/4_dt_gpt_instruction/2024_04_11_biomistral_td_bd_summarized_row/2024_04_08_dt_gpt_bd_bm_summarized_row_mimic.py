@@ -86,6 +86,12 @@ def build_parser():
         help="Number of joblib workers for DF-to-string conversion. Defaults to DTGPT_DF_CONVERSION_N_JOBS or 1.",
     )
     parser.add_argument("--deepspeed-config", type=str, default=None)
+    parser.add_argument("--train-max-patients", type=int, default=None)
+    parser.add_argument("--validation-max-patients", type=int, default=None)
+    parser.add_argument("--test-max-patients", type=int, default=None)
+    parser.add_argument("--train-max-samples", type=int, default=None)
+    parser.add_argument("--validation-max-samples", type=int, default=None)
+    parser.add_argument("--skip-eval", action="store_true")
     parser.add_argument("--local-rank", "--local_rank", type=int, default=-1)
     parser.add_argument("--prediction-url", type=str, default="http://127.0.0.1:18101/v1/")
     parser.add_argument("--vllm-model-name", type=str, default=None)
@@ -122,6 +128,12 @@ def main():
         logging_steps=args.logging_steps,
         sft_dataset_num_proc=args.sft_dataset_num_proc,
         df_conversion_n_jobs=args.df_conversion_n_jobs,
+        train_max_patients=args.train_max_patients,
+        validation_max_patients=args.validation_max_patients,
+        test_max_patients=args.test_max_patients,
+        train_max_samples=args.train_max_samples,
+        validation_max_samples=args.validation_max_samples,
+        skip_eval=args.skip_eval,
         nr_days_forecasting=91,
         seq_max_len_in_tokens=args.seq_max_len,
         decimal_precision=args.decimal_precision,

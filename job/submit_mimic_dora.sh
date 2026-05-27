@@ -63,6 +63,15 @@ TORCH_NCCL_LIB_DIR="$("${PYTHON_BIN}" -c "import pathlib, sys; p = pathlib.Path(
 if [ -n "${TORCH_NCCL_LIB_DIR}" ]; then
     export LD_LIBRARY_PATH="${TORCH_NCCL_LIB_DIR}:${LD_LIBRARY_PATH:-}"
 fi
+# Unset GCC include path overrides that were set by the HPC module system.
+# Having /usr/include in C_INCLUDE_PATH / CPLUS_INCLUDE_PATH / CPATH causes GCC
+# to treat that path as a *user* directory instead of a system directory, which
+# breaks the #include_next directive inside GCC's own <cstdlib> / <stdlib.h>
+# and makes DeepSpeed's JIT compilation of cpu_adam fail with:
+#   fatal error: stdlib.h: No such file or directory
+unset C_INCLUDE_PATH
+unset CPLUS_INCLUDE_PATH
+unset CPATH
 unset NCCL_COMM_BLOCKING
 unset NCCL_BLOCKING_WAIT
 unset TORCH_NCCL_BLOCKING_WAIT
@@ -100,6 +109,13 @@ RUN_DISTRIBUTED_SMOKE_CHECK="${DTGPT_RUN_DISTRIBUTED_SMOKE_CHECK:-1}"
 SFT_DATASET_NUM_PROC="${DTGPT_SFT_DATASET_NUM_PROC:-1}"
 DF_CONVERSION_N_JOBS="${DTGPT_DF_CONVERSION_N_JOBS:-1}"
 RUN_SPLIT_SMOKE_CHECK="${DTGPT_RUN_SPLIT_SMOKE_CHECK:-1}"
+TRAIN_MAX_PATIENTS="${DTGPT_TRAIN_MAX_PATIENTS:-}"
+VALIDATION_MAX_PATIENTS="${DTGPT_VALIDATION_MAX_PATIENTS:-}"
+TEST_MAX_PATIENTS="${DTGPT_TEST_MAX_PATIENTS:-}"
+TRAIN_MAX_SAMPLES="${DTGPT_TRAIN_MAX_SAMPLES:-}"
+VALIDATION_MAX_SAMPLES="${DTGPT_VALIDATION_MAX_SAMPLES:-}"
+SKIP_EVAL="${DTGPT_SKIP_EVAL:-0}"
+DEBUG_MODE="${DTGPT_DEBUG:-0}"
 
 DEFAULT_SWEEP_CONFIGS=(
     # Format: lora_r,lora_alpha,gradient_accumulation,num_train_epochs,learning_rate
@@ -144,6 +160,13 @@ echo "Generation samples per patient: ${NUM_SAMPLES_TO_GENERATE}"
 echo "Generation max new tokens: ${MAX_NEW_TOKENS}"
 echo "LoRA dropout: ${LORA_DROPOUT}"
 echo "Max training steps: ${MAX_STEPS}"
+echo "Train max patients: ${TRAIN_MAX_PATIENTS:-none}"
+echo "Validation max patients: ${VALIDATION_MAX_PATIENTS:-none}"
+echo "Test max patients: ${TEST_MAX_PATIENTS:-none}"
+echo "Train max samples: ${TRAIN_MAX_SAMPLES:-none}"
+echo "Validation max samples: ${VALIDATION_MAX_SAMPLES:-none}"
+echo "Skip eval after training: ${SKIP_EVAL}"
+echo "Debug/WandB disabled: ${DEBUG_MODE}"
 if [ -n "${RESUME_FROM_CHECKPOINT}" ]; then
     echo "Resume from checkpoint: ${RESUME_FROM_CHECKPOINT}"
 fi
@@ -229,6 +252,9 @@ for raw_config in "${SWEEP_CONFIGS[@]}"; do
     UNSLOTH_FLAG=()
     GRADIENT_CHECKPOINTING_FLAG=()
     RESUME_FLAG=()
+    DATA_LIMIT_FLAGS=()
+    SKIP_EVAL_FLAG=()
+    DEBUG_FLAG=()
     RUNNER=("${PYTHON_BIN}")
     if [ "${USE_DORA}" = "1" ]; then
         DORA_FLAG=(--use-dora)
@@ -242,6 +268,27 @@ for raw_config in "${SWEEP_CONFIGS[@]}"; do
     if [ -n "${RESUME_FROM_CHECKPOINT}" ]; then
         RESUME_FLAG=(--resume-from-checkpoint "${RESUME_FROM_CHECKPOINT}")
     fi
+    if [ -n "${TRAIN_MAX_PATIENTS}" ]; then
+        DATA_LIMIT_FLAGS+=(--train-max-patients "${TRAIN_MAX_PATIENTS}")
+    fi
+    if [ -n "${VALIDATION_MAX_PATIENTS}" ]; then
+        DATA_LIMIT_FLAGS+=(--validation-max-patients "${VALIDATION_MAX_PATIENTS}")
+    fi
+    if [ -n "${TEST_MAX_PATIENTS}" ]; then
+        DATA_LIMIT_FLAGS+=(--test-max-patients "${TEST_MAX_PATIENTS}")
+    fi
+    if [ -n "${TRAIN_MAX_SAMPLES}" ]; then
+        DATA_LIMIT_FLAGS+=(--train-max-samples "${TRAIN_MAX_SAMPLES}")
+    fi
+    if [ -n "${VALIDATION_MAX_SAMPLES}" ]; then
+        DATA_LIMIT_FLAGS+=(--validation-max-samples "${VALIDATION_MAX_SAMPLES}")
+    fi
+    if [ "${SKIP_EVAL}" = "1" ]; then
+        SKIP_EVAL_FLAG=(--skip-eval)
+    fi
+    if [ "${DEBUG_MODE}" = "1" ]; then
+        DEBUG_FLAG=(--debug)
+    fi
     if [ "${USE_DEEPSPEED}" = "1" ]; then
         DEEPSPEED_FLAG=(--deepspeed-config "${DEEPSPEED_CONFIG}")
     fi
@@ -250,6 +297,7 @@ for raw_config in "${SWEEP_CONFIGS[@]}"; do
     fi
 
     if ! "${RUNNER[@]}" "${TRAIN_SCRIPT}" \
+        "${DEBUG_FLAG[@]}" \
         --use-lora \
         "${DORA_FLAG[@]}" \
         "${UNSLOTH_FLAG[@]}" \
@@ -265,6 +313,8 @@ for raw_config in "${SWEEP_CONFIGS[@]}"; do
         --num-train-epochs "${num_train_epochs}" \
         --max-steps "${MAX_STEPS}" \
         "${RESUME_FLAG[@]}" \
+        "${DATA_LIMIT_FLAGS[@]}" \
+        "${SKIP_EVAL_FLAG[@]}" \
         --seq-max-len "${SEQ_MAX_LEN}" \
         --decimal-precision "${DECIMAL_PRECISION}" \
         --num-samples-to-generate "${NUM_SAMPLES_TO_GENERATE}" \

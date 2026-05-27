@@ -7,6 +7,13 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+# Unsloth must patch transformers/TRL/PEFT before those packages are imported.
+# It also returns empty logits by default, while this TRL SFTTrainer version
+# computes entropy from outputs.logits after loss computation.
+if os.environ.get("DTGPT_USE_UNSLOTH") == "1":
+    os.environ.setdefault("UNSLOTH_RETURN_LOGITS", "1")
+    import unsloth  # noqa: F401
+
 from pipeline.EvaluationManager import EvaluationManager
 from pipeline.Experiment import Experiment
 import wandb
@@ -18,6 +25,7 @@ from pipeline.data_processors.DataProcessorBiomistral import DataProcessorBiomis
 from pipeline.NormalizationFilterManager import Only_Double3_sigma_Filtering
 import torch
 from transformers import AutoModelForCausalLM
+from peft import PeftModel
 from pipeline.hf_training_args import create_training_arguments
 import gc
 from pipeline.NormalizationFilterManager import Only_Double3_sigma_Filtering
@@ -42,6 +50,16 @@ from pipeline.lora_helpers import (
     load_lora_model_for_inference,
 )
 from pipeline.evaluation_shards import shard_suffix, slice_by_shard
+from pipeline.distributed_dataset_cache import (
+    TRAIN_SPLIT,
+    VALIDATION_SPLIT,
+    build_dataset_cache_dir,
+    dataset_cache_complete,
+    dataset_cache_paths,
+    mark_dataset_cache_complete,
+    wait_for_dataset_cache_complete,
+)
+from datasets import load_from_disk
 
 
 
@@ -70,6 +88,12 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
                 deepspeed_config=None,
                 sft_dataset_num_proc=1,
                 df_conversion_n_jobs=None,
+                train_max_patients=None,
+                validation_max_patients=None,
+                test_max_patients=None,
+                train_max_samples=None,
+                validation_max_samples=None,
+                skip_eval=False,
                 eval_backend="vllm",
                 eval_shard_index=0,
                 eval_num_shards=1,
@@ -95,6 +119,71 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
         rank = int(os.environ.get("RANK", "0"))
         is_distributed = int(os.environ.get("WORLD_SIZE", "1")) > 1
         is_main_process = rank == 0
+
+        def checkpoint_has_deepspeed_state(checkpoint_path):
+            if checkpoint_path is None:
+                return False
+            checkpoint_path = Path(checkpoint_path)
+            if not checkpoint_path.exists():
+                return False
+            if (checkpoint_path / "latest").exists():
+                return True
+            return any(child.is_dir() and child.name.startswith("global_step") for child in checkpoint_path.iterdir())
+
+        def read_checkpoint_global_step(checkpoint_path):
+            trainer_state_path = Path(checkpoint_path) / "trainer_state.json"
+            if not trainer_state_path.exists():
+                return 0
+            with open(trainer_state_path) as handle:
+                trainer_state = json.load(handle)
+            return int(trainer_state.get("global_step") or 0)
+
+        trainer_resume_checkpoint = resume_from_checkpoint
+        adapter_init_checkpoint = None
+        checkpoint_global_step = 0
+        effective_max_steps = max_steps
+        if resume_from_checkpoint is not None:
+            resume_checkpoint_path = Path(resume_from_checkpoint)
+            resume_checkpoint_has_deepspeed_state = checkpoint_has_deepspeed_state(resume_checkpoint_path)
+            should_initialize_from_adapter = (
+                use_unsloth
+                or (deepspeed_config is not None and not resume_checkpoint_has_deepspeed_state)
+            )
+            if should_initialize_from_adapter:
+                adapter_path = resume_checkpoint_path / "adapter_model.safetensors"
+                if not adapter_path.exists():
+                    raise ValueError(
+                        "Resume checkpoint must contain adapter_model.safetensors for "
+                        "adapter-initialized training, but it was not found: "
+                        f"adapter_model.safetensors: {resume_checkpoint_path}"
+                    )
+                checkpoint_global_step = read_checkpoint_global_step(resume_checkpoint_path)
+                adapter_init_checkpoint = str(resume_checkpoint_path)
+                trainer_resume_checkpoint = None
+                if max_steps is not None and max_steps > 0:
+                    effective_max_steps = max(max_steps - checkpoint_global_step, 1)
+                logging.info(
+                    "Checkpoint %s will initialize trainable adapter weights instead of "
+                    "resuming full Trainer/DeepSpeed state; "
+                    "initializing adapter weights and training for remaining steps. "
+                    "checkpoint_global_step=%s target_max_steps=%s effective_max_steps=%s "
+                    "use_unsloth=%s deepspeed=%s checkpoint_has_deepspeed_state=%s",
+                    resume_checkpoint_path,
+                    checkpoint_global_step,
+                    max_steps,
+                    effective_max_steps,
+                    use_unsloth,
+                    deepspeed_config is not None,
+                    resume_checkpoint_has_deepspeed_state,
+                )
+                if deepspeed_config is not None and gradient_checkpointing:
+                    logging.info(
+                        "Disabling gradient checkpointing for PEFT-adapter DeepSpeed resume fallback "
+                        "because torch checkpoint recomputation can produce mismatched tensor metadata "
+                        "with this stack."
+                    )
+                    gradient_checkpointing = False
+
 
         # Setup hyperparameters
         LEARNING_RATE = learning_rate                # From meditron paper (pretraining setting)
@@ -136,6 +225,30 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
         validation_full_paths, validation_full_patientids = eval_manager.get_paths_to_events_in_split(validation_set)
         test_full_paths, test_full_patientids = eval_manager.get_paths_to_events_in_split(test_set)
 
+        def limit_split(paths, patientids, max_patients, split_name):
+            if max_patients is None:
+                return paths, patientids
+            if max_patients <= 0:
+                raise ValueError(f"{split_name} max patients must be positive, got {max_patients}")
+            limited_count = min(max_patients, len(patientids))
+            logging.info(
+                "Limiting %s patient IDs from %s to %s using explicit smoke limit",
+                split_name,
+                len(patientids),
+                limited_count,
+            )
+            return paths[:limited_count], patientids[:limited_count]
+
+        training_full_paths, training_full_patientids = limit_split(
+            training_full_paths, training_full_patientids, train_max_patients, "train"
+        )
+        validation_full_paths, validation_full_patientids = limit_split(
+            validation_full_paths, validation_full_patientids, validation_max_patients, "validation"
+        )
+        test_full_paths, test_full_patientids = limit_split(
+            test_full_paths, test_full_patientids, test_max_patients, "test"
+        )
+
         # Load data
         training_full_constants, training_full_events = eval_manager.load_list_of_patient_dfs_and_constants(training_full_patientids)
         validation_full_constants, validation_full_events = eval_manager.load_list_of_patient_dfs_and_constants(validation_full_patientids)
@@ -145,11 +258,31 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
         # Setup splitter object
         splitter = After24HSplitter()
 
+        def limit_events(events, meta_data, max_samples, split_name):
+            if max_samples is None:
+                return events, meta_data
+            if max_samples <= 0:
+                raise ValueError(f"{split_name} max samples must be positive, got {max_samples}")
+            limited_count = min(max_samples, len(events))
+            logging.info(
+                "Limiting %s split samples from %s to %s using explicit smoke limit",
+                split_name,
+                len(events),
+                limited_count,
+            )
+            return events[:limited_count], meta_data[:limited_count]
+
         if eval_model_path is None:
             training_events, training_meta_data = splitter.setup_split_indices(training_full_events, eval_manager)
+            training_events, training_meta_data = limit_events(
+                training_events, training_meta_data, train_max_samples, "train"
+            )
 
         # Setup also validation and test
         validation_events, validation_meta = splitter.setup_split_indices(validation_full_events, eval_manager)
+        validation_events, validation_meta = limit_events(
+            validation_events, validation_meta, validation_max_samples, "validation"
+        )
 
         test_events, test_meta = splitter.setup_split_indices(test_full_events, eval_manager)
         test_events_full_count = len(test_events)
@@ -269,49 +402,83 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
         conversion_function = DTGPTDataFrameConverterTemplateTextBasicDescriptionMIMIC.convert_df_to_strings
 
         if eval_model_path is None:
+            dataset_cache_dir = build_dataset_cache_dir(
+                experiment.get_experiment_folder(),
+                "mimic_train_validation_tokenized",
+            )
+            dataset_paths = dataset_cache_paths(dataset_cache_dir)
+            should_build_dataset_cache = is_main_process and not dataset_cache_complete(dataset_cache_dir)
+
+            if is_main_process and dataset_cache_complete(dataset_cache_dir):
+                logging.info("Using existing tokenized dataset cache at %s", dataset_cache_dir)
+                del training_full_constants, training_full_events
+                del validation_full_constants, validation_full_events
+                del training_events, validation_events
+                gc.collect()
+                log_memory_usage("rank-main-after-dropping-raw-dfs-for-existing-cache")
+
+            if is_distributed and not is_main_process:
+                logging.info(
+                    "Rank %s skipping DF conversion and waiting for rank 0 dataset cache at %s",
+                    rank,
+                    dataset_cache_dir,
+                )
+                del training_full_constants, training_full_events
+                del validation_full_constants, validation_full_events
+                del training_events, validation_events
+                gc.collect()
+                log_memory_usage("rank-non-main-after-dropping-raw-dfs-before-cache-wait")
+
+            if should_build_dataset_cache:
+                logging.info("Rank 0 building tokenized dataset cache at %s", dataset_cache_dir)
+                if dataset_cache_dir.exists():
+                    import shutil
+                    shutil.rmtree(dataset_cache_dir)
+
             # set up all tuples to be used as arguments for the conversion function
-            training_events = [(column_mapping, curr_const_row, true_events_input, true_future_events_input, target_dataframe, filtering_rows_rest_budget, SEQUENCE_MAX_LENGTH_IN_TOKENS, DECIMAL_PRECISION, prompt)
-                                for curr_const_row, true_events_input, true_future_events_input, target_dataframe in training_events]
+                training_events = [(column_mapping, curr_const_row, true_events_input, true_future_events_input, target_dataframe, filtering_rows_rest_budget, SEQUENCE_MAX_LENGTH_IN_TOKENS, DECIMAL_PRECISION, prompt)
+                                    for curr_const_row, true_events_input, true_future_events_input, target_dataframe in training_events]
 
 
             #: apply filtering of training data to remove bad outliers
-            training_norm_filter = Only_Double3_sigma_Filtering(path_to_statistics_file)
+                training_norm_filter = Only_Double3_sigma_Filtering(path_to_statistics_file)
 
             #: use the same filtering function but apply to training data
-            training_events = [(x[0], x[1],
-                                    training_norm_filter.normalize_and_filter(x[2].copy(), None, replace_nan_rows=False, replace_missing_in_prediction=False, verbose=False, specific_column_list=["lab_26499_4"])[0],
-                                    x[3],
-                                    training_norm_filter.normalize_and_filter(x[4].copy(), None, replace_nan_rows=False, replace_missing_in_prediction=False, verbose=False)[0],
-                                    x[5], x[6], x[7], x[8], constant_column_mapping) for x in training_events]
+                training_events = [(x[0], x[1],
+                                        training_norm_filter.normalize_and_filter(x[2].copy(), None, replace_nan_rows=False, replace_missing_in_prediction=False, verbose=False, specific_column_list=["lab_26499_4"])[0],
+                                        x[3],
+                                        training_norm_filter.normalize_and_filter(x[4].copy(), None, replace_nan_rows=False, replace_missing_in_prediction=False, verbose=False)[0],
+                                        x[5], x[6], x[7], x[8], constant_column_mapping) for x in training_events]
 
-            training_records = list(iter_converted_tuples(training_events, conversion_function, log_every=100))
-            if len(training_records) >= 2:
-                logging.info("Example of input: " + training_records[0]["input_text"])
-                logging.info("Example of target: " + training_records[0]["target_text"])
-                logging.info("Example of input: " + training_records[1]["input_text"])
-                logging.info("Example of target: " + training_records[1]["target_text"])
-            del training_events
-            del training_full_constants, training_full_events
-            gc.collect()
-            log_memory_usage("after-training-string-conversion-and-raw-train-free")
+                training_records = list(iter_converted_tuples(training_events, conversion_function, log_every=100))
+                if len(training_records) >= 2:
+                    logging.info("Example of input: " + training_records[0]["input_text"])
+                    logging.info("Example of target: " + training_records[0]["target_text"])
+                    logging.info("Example of input: " + training_records[1]["input_text"])
+                    logging.info("Example of target: " + training_records[1]["target_text"])
+                del training_events
+                del training_full_constants, training_full_events
+                gc.collect()
+                log_memory_usage("after-training-string-conversion-and-raw-train-free")
 
 
             # apply for validation data
-            validation_events_for_tokenization = [(column_mapping, curr_const_row, true_events_input, true_future_events_input, target_dataframe, filtering_rows_rest_budget, SEQUENCE_MAX_LENGTH_IN_TOKENS, DECIMAL_PRECISION, prompt)
-                                                    for curr_const_row, true_events_input, true_future_events_input, target_dataframe in validation_events]
+                validation_events_for_tokenization = [(column_mapping, curr_const_row, true_events_input, true_future_events_input, target_dataframe, filtering_rows_rest_budget, SEQUENCE_MAX_LENGTH_IN_TOKENS, DECIMAL_PRECISION, prompt)
+                                                        for curr_const_row, true_events_input, true_future_events_input, target_dataframe in validation_events]
 
             #: use the same filtering function but apply to training data
-            validation_events_for_tokenization = [(x[0], x[1],
-                                                        training_norm_filter.normalize_and_filter(x[2].copy(), None, replace_nan_rows=False, replace_missing_in_prediction=False, verbose=False, specific_column_list=["lab_26499_4"])[0],
-                                                        x[3],
-                                                        training_norm_filter.normalize_and_filter(x[4].copy(), None, replace_nan_rows=False, replace_missing_in_prediction=False, verbose=False)[0],
-                                                        x[5], x[6], x[7], x[8], constant_column_mapping) for x in validation_events_for_tokenization]
+                validation_events_for_tokenization = [(x[0], x[1],
+                                                            training_norm_filter.normalize_and_filter(x[2].copy(), None, replace_nan_rows=False, replace_missing_in_prediction=False, verbose=False, specific_column_list=["lab_26499_4"])[0],
+                                                            x[3],
+                                                            training_norm_filter.normalize_and_filter(x[4].copy(), None, replace_nan_rows=False, replace_missing_in_prediction=False, verbose=False)[0],
+                                                            x[5], x[6], x[7], x[8], constant_column_mapping) for x in validation_events_for_tokenization]
 
-            validation_records = list(iter_converted_tuples(validation_events_for_tokenization, conversion_function, log_every=100))
-            del validation_events_for_tokenization
-            del validation_full_constants, validation_full_events
-            gc.collect()
-            log_memory_usage("after-validation-string-conversion-and-raw-validation-free")
+                validation_records = list(iter_converted_tuples(validation_events_for_tokenization, conversion_function, log_every=100))
+                del validation_events_for_tokenization
+                del validation_events
+                del validation_full_constants, validation_full_events
+                gc.collect()
+                log_memory_usage("after-validation-string-conversion-and-raw-validation-free")
 
 
         ######################################################## SETUP DATA PROCESSOR ########################################################
@@ -331,15 +498,37 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
 
         if eval_model_path is None:
             tokenize = True
-            training_dataset = dp.preprocess_converted_records(training_records, tokenize=tokenize, keep_text_columns=False)
-            del training_records
-            gc.collect()
-            log_memory_usage("after-training-tokenization-and-record-free")
+            if should_build_dataset_cache:
+                training_dataset = dp.preprocess_converted_records(training_records, tokenize=tokenize, keep_text_columns=False)
+                del training_records
+                gc.collect()
+                log_memory_usage("after-training-tokenization-and-record-free")
 
-            validation_dataset = dp.preprocess_converted_records(validation_records, tokenize=tokenize, keep_text_columns=False)
-            del validation_records
+                validation_dataset = dp.preprocess_converted_records(validation_records, tokenize=tokenize, keep_text_columns=False)
+                del validation_records
+                gc.collect()
+                log_memory_usage("after-validation-tokenization-and-record-free")
+
+                training_dataset.save_to_disk(str(dataset_paths[TRAIN_SPLIT]))
+                validation_dataset.save_to_disk(str(dataset_paths[VALIDATION_SPLIT]))
+                mark_dataset_cache_complete(dataset_cache_dir)
+                logging.info("Saved tokenized dataset cache at %s", dataset_cache_dir)
+
+                del training_dataset, validation_dataset
+                gc.collect()
+                log_memory_usage("after-saving-tokenized-dataset-cache")
+
+            if is_distributed and not is_main_process:
+                wait_for_dataset_cache_complete(dataset_cache_dir, poll_seconds=30)
+
+            if not dataset_cache_complete(dataset_cache_dir):
+                raise RuntimeError(f"Tokenized dataset cache was not created: {dataset_cache_dir}")
+
+            logging.info("Loading tokenized dataset cache from %s", dataset_cache_dir)
+            training_dataset = load_from_disk(str(dataset_paths[TRAIN_SPLIT]))
+            validation_dataset = load_from_disk(str(dataset_paths[VALIDATION_SPLIT]))
             gc.collect()
-            log_memory_usage("after-validation-tokenization-and-record-free")
+            log_memory_usage("after-loading-tokenized-dataset-cache")
 
 
             ######################################################## SETUP MODEL ########################################################
@@ -354,14 +543,23 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
                     load_in_4bit=True,
                     dtype=get_torch_dtype(precision_config["torch_dtype_name"]),
                 )
-                model = apply_unsloth_peft(
-                    model,
-                    r=lora_r,
-                    lora_alpha=lora_alpha,
-                    lora_dropout=lora_dropout,
-                    use_dora=use_dora,
-                    use_gradient_checkpointing=gradient_checkpointing,
-                )
+                if adapter_init_checkpoint is not None:
+                    logging.info("Loading trainable PEFT adapter into Unsloth model from checkpoint: %s", adapter_init_checkpoint)
+                    model = PeftModel.from_pretrained(
+                        model,
+                        adapter_init_checkpoint,
+                        is_trainable=True,
+                    )
+                    model.print_trainable_parameters()
+                else:
+                    model = apply_unsloth_peft(
+                        model,
+                        r=lora_r,
+                        lora_alpha=lora_alpha,
+                        lora_dropout=lora_dropout,
+                        use_dora=use_dora,
+                        use_gradient_checkpointing=gradient_checkpointing,
+                    )
             else:
                 model_load_kwargs = get_model_load_kwargs(
                     experiment.model_cache_path,
@@ -378,17 +576,28 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
                     model.config.use_cache = False
 
                 if use_lora:
-                    lora_config = build_mistral_lora_config(
-                        r=lora_r,
-                        lora_alpha=lora_alpha,
-                        lora_dropout=lora_dropout,
-                        use_dora=use_dora,
-                    )
-                    model = apply_lora_to_model(
-                        model,
-                        lora_config,
-                        gradient_checkpointing=gradient_checkpointing,
-                    )
+                    if adapter_init_checkpoint is not None:
+                        if gradient_checkpointing and hasattr(model, "enable_input_require_grads"):
+                            model.enable_input_require_grads()
+                        logging.info("Loading trainable PEFT adapter from checkpoint: %s", adapter_init_checkpoint)
+                        model = PeftModel.from_pretrained(
+                            model,
+                            adapter_init_checkpoint,
+                            is_trainable=True,
+                        )
+                        model.print_trainable_parameters()
+                    else:
+                        lora_config = build_mistral_lora_config(
+                            r=lora_r,
+                            lora_alpha=lora_alpha,
+                            lora_dropout=lora_dropout,
+                            use_dora=use_dora,
+                        )
+                        model = apply_lora_to_model(
+                            model,
+                            lora_config,
+                            gradient_checkpointing=gradient_checkpointing,
+                        )
 
             logging.info("Num params in model: " + str(model.num_parameters()))
 
@@ -399,7 +608,7 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
             train_params = create_training_arguments(
                 output_dir=experiment.model_path,
                 per_device_train_batch_size=BATCH_SIZE_TRAINING,
-                per_device_eval_batch_size=BATCH_SIZE_TRAINING,
+                per_device_eval_batch_size=BATCH_SIZE_VALIDATION,
                 gradient_accumulation_steps=GRADIENT_ACCUMULATION,
                 gradient_checkpointing=gradient_checkpointing,
                 gradient_checkpointing_kwargs={"use_reentrant": False} if gradient_checkpointing else None,
@@ -424,40 +633,63 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
                 save_total_limit=2,
                 report_to="wandb" if is_main_process else "none",
                 load_best_model_at_end=True,
-                max_steps=max_steps,
+                max_steps=effective_max_steps,
                 seed=42,
             )
 
 
-            sft_trainer_kwargs = {}
-            if "dataset_num_proc" in inspect.signature(SFTTrainer).parameters:
+            sft_trainer_signature = inspect.signature(SFTTrainer).parameters
+            sft_trainer_args = train_params
+            if "processing_class" in sft_trainer_signature:
+                from trl import SFTConfig
+                sft_config_kwargs = train_params.to_dict()
+                sft_config_kwargs["hub_token"] = train_params.hub_token
+                sft_config_kwargs.pop("push_to_hub_token", None)
+                sft_config_kwargs["max_length"] = SEQUENCE_MAX_LENGTH_IN_TOKENS
+                sft_trainer_args = SFTConfig(**sft_config_kwargs)
+
+            sft_trainer_kwargs = {
+                "model": model,
+                "train_dataset": training_dataset,
+                "eval_dataset": validation_dataset,
+                "data_collator": data_collator,
+                "args": sft_trainer_args,
+            }
+
+            if "processing_class" in sft_trainer_signature:
+                sft_trainer_kwargs["processing_class"] = dp.tokenizer
+            elif "tokenizer" in sft_trainer_signature:
+                sft_trainer_kwargs["tokenizer"] = dp.tokenizer
+
+            if "max_seq_length" in sft_trainer_signature:
+                sft_trainer_kwargs["max_seq_length"] = SEQUENCE_MAX_LENGTH_IN_TOKENS
+            if "packing" in sft_trainer_signature:
+                sft_trainer_kwargs["packing"] = False
+            if "dataset_text_field" in sft_trainer_signature:
+                sft_trainer_kwargs["dataset_text_field"] = "concatenated_text"
+            if "dataset_num_proc" in sft_trainer_signature:
                 sft_trainer_kwargs["dataset_num_proc"] = sft_dataset_num_proc
 
-            trainer = SFTTrainer(
-                model=model,
-                train_dataset=training_dataset,
-                eval_dataset=validation_dataset,
-                tokenizer=dp.tokenizer,
-                data_collator=data_collator,
-                max_seq_length=SEQUENCE_MAX_LENGTH_IN_TOKENS,
-                args=train_params,
-                packing=False,
-                dataset_text_field="concatenated_text",
-                **sft_trainer_kwargs,
-            )
+            trainer = SFTTrainer(**sft_trainer_kwargs)
 
 
             ######################################################## TRAINING ########################################################
 
 
             logging.info("Start training")
-            if resume_from_checkpoint is not None:
-                resume_checkpoint_path = Path(resume_from_checkpoint)
+            if trainer_resume_checkpoint is not None:
+                resume_checkpoint_path = Path(trainer_resume_checkpoint)
                 if not resume_checkpoint_path.exists():
                     raise FileNotFoundError(f"Resume checkpoint does not exist: {resume_checkpoint_path}")
-                logging.info("Resume training from checkpoint: %s", resume_checkpoint_path)
+                logging.info("Resume trainer state from checkpoint: %s", resume_checkpoint_path)
                 trainer.train(resume_from_checkpoint=str(resume_checkpoint_path))
             else:
+                if adapter_init_checkpoint is not None:
+                    logging.info(
+                        "Training from adapter-initialized checkpoint %s for %s optimizer steps",
+                        adapter_init_checkpoint,
+                        effective_max_steps,
+                    )
                 trainer.train()
 
             if use_lora:
@@ -480,6 +712,12 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
                 torch.distributed.barrier()
                 if not is_main_process:
                     return
+
+            if skip_eval:
+                if is_main_process and wandb.run is not None:
+                    wandb.run.finish()
+                logging.info("Skipping eval after training because skip_eval=True")
+                return
 
             if not is_main_process:
                 return

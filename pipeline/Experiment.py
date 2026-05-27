@@ -600,7 +600,7 @@ class Experiment:
                                                 do_sample=gen_do_sample, num_beams=gen_num_beams,
                                                 penalty_alpha=gen_penalty_alpha, top_k=gen_top_k,
                                                 top_p=gen_top_p,
-                                                max_new_tokens=max_new_tokens, max_length=max_output_length + 92, 
+                                                max_new_tokens=max_new_tokens,
                                                 pad_token_id=pad_token_id,
                                                 return_dict_in_generate=True, output_scores=True)
                 
@@ -621,7 +621,7 @@ class Experiment:
                                                     do_sample=gen_do_sample, num_beams=gen_num_beams,
                                                     penalty_alpha=gen_penalty_alpha, top_k=gen_top_k,
                                                     top_p=gen_top_p,
-                                                    max_new_tokens=max_new_tokens, max_length=max_output_length + 92, 
+                                                    max_new_tokens=max_new_tokens,
                                                     pad_token_id=pad_token_id)
 
             #: batch decode using tokenizer

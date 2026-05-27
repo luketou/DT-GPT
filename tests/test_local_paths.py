@@ -31,11 +31,24 @@ class LocalPathTests(unittest.TestCase):
             cuda_available=True,
             capability_major=8,
             training=True,
+            flash_attention_available=True,
         )
         self.assertEqual(cfg["torch_dtype_name"], "bfloat16")
         self.assertTrue(cfg["bf16"])
         self.assertFalse(cfg["fp16"])
         self.assertEqual(cfg["attn_implementation"], "flash_attention_2")
+
+    def test_select_precision_config_falls_back_to_eager_without_flash_attention(self):
+        cfg = select_precision_config(
+            cuda_available=True,
+            capability_major=8,
+            training=True,
+            flash_attention_available=False,
+        )
+        self.assertEqual(cfg["torch_dtype_name"], "bfloat16")
+        self.assertTrue(cfg["bf16"])
+        self.assertFalse(cfg["fp16"])
+        self.assertEqual(cfg["attn_implementation"], "eager")
 
     def test_select_precision_config_uses_fp32_weights_for_v100_training(self):
         cfg = select_precision_config(

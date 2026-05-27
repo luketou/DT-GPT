@@ -1,3 +1,4 @@
+import importlib.util
 import os
 from pathlib import Path
 
@@ -174,7 +175,17 @@ def ensure_runtime_cache_env(env=None):
     }
 
 
-def select_precision_config(cuda_available, capability_major, training=False):
+def is_flash_attention_available():
+    """Return True when Transformers can import FlashAttention2 kernels."""
+    return importlib.util.find_spec("flash_attn") is not None
+
+
+def select_precision_config(
+    cuda_available,
+    capability_major,
+    training=False,
+    flash_attention_available=True,
+):
     if not cuda_available:
         return {
             "torch_dtype_name": "float32",
@@ -188,7 +199,9 @@ def select_precision_config(cuda_available, capability_major, training=False):
             "torch_dtype_name": "bfloat16",
             "bf16": True,
             "fp16": False,
-            "attn_implementation": "flash_attention_2",
+            "attn_implementation": (
+                "flash_attention_2" if flash_attention_available else "eager"
+            ),
         }
 
     if training:
@@ -207,14 +220,18 @@ def select_precision_config(cuda_available, capability_major, training=False):
     }
 
 
-def get_precision_config(training=False):
+def get_precision_config(training=False, flash_attention_available=None):
     import torch
+
+    if flash_attention_available is None:
+        flash_attention_available = is_flash_attention_available()
 
     if not torch.cuda.is_available():
         return select_precision_config(
             cuda_available=False,
             capability_major=None,
             training=training,
+            flash_attention_available=flash_attention_available,
         )
 
     major, _minor = torch.cuda.get_device_capability()
@@ -222,6 +239,7 @@ def get_precision_config(training=False):
         cuda_available=True,
         capability_major=major,
         training=training,
+        flash_attention_available=flash_attention_available,
     )
 
 
