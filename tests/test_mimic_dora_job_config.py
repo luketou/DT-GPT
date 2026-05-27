@@ -82,6 +82,29 @@ class TestMimicDoraJobConfig(unittest.TestCase):
             body,
         )
 
+    def test_v100_sharded_eval_wrapper_uses_16_shards_with_two_concurrent_tasks(self):
+        wrapper = (
+            REPO_ROOT / "job" / "submit_mimic_dora_checkpoint700_eval_v100_array.sh"
+        ).read_text()
+
+        self.assertIn("#SBATCH --partition=v100-32g", wrapper)
+        self.assertIn("#SBATCH --account=v100-32g", wrapper)
+        self.assertIn("#SBATCH --gres=gpu:1", wrapper)
+        self.assertIn("#SBATCH --array=0-15%2", wrapper)
+        self.assertIn(
+            'export DTGPT_EVAL_NUM_SHARDS="${DTGPT_EVAL_NUM_SHARDS:-16}"',
+            wrapper,
+        )
+        self.assertIn(
+            'export DTGPT_EVAL_SHARD_INDEX="${SLURM_ARRAY_TASK_ID:-${DTGPT_EVAL_SHARD_INDEX:-0}}"',
+            wrapper,
+        )
+        self.assertIn(
+            'export DTGPT_MAX_NEW_TOKENS="${DTGPT_MAX_NEW_TOKENS:-1024}"',
+            wrapper,
+        )
+        self.assertIn("bash job/submit_mimic_dora_checkpoint700_eval_v100.sh", wrapper)
+
     def test_hf_generation_uses_only_max_new_tokens_length_cap(self):
         experiment_source = (REPO_ROOT / "pipeline" / "Experiment.py").read_text()
 
