@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name="dtgpt-mimic-dora-r32-full"
+#SBATCH --job-name="dtgpt-mimic-dora-r64-1epoch"
 #SBATCH --partition=l40s
 #SBATCH --account=l40s
 #SBATCH --nodes=1
@@ -8,35 +8,34 @@
 #SBATCH --gres=gpu:1
 #SBATCH --exclusive
 #SBATCH --mem=48G
-#SBATCH --time=3-0:0
-#SBATCH --output=logs/mimic_dora_r32_full_%j.out
-#SBATCH --error=logs/mimic_dora_r32_full_%j.err
+#SBATCH --time=7-0:0
+#SBATCH --output=logs/mimic_dora_r64_full_%j.out
+#SBATCH --error=logs/mimic_dora_r64_full_%j.err
 #SBATCH --chdir=/share/home/r15543056/trajectory_forecast/DT-GPT
 
 set -euo pipefail
 
-# Full-validation r=32 DoRA probe.
-# This starts a NEW adapter because a PEFT r=16 checkpoint cannot be expanded
-# in-place to r=32. Compared with the earlier minival wrapper, this keeps the
-# full validation set and enables dropout so the larger adapter is less likely
-# to overfit before the first useful checkpoint.
+# Full-training r=64 DoRA run (validated by smoke test job 38150).
+# Rank=64, Alpha=128 (alpha/r=2), LR=1e-4 (cosine schedule, validated stable).
+# Grad_acc=8 → effective batch size=8. Single L40S; no DeepSpeed/distributed.
+# Runs full epoch (-1 steps = use num_train_epochs from sweep config).
 REPO_ROOT="${DTGPT_REPO_ROOT:-/share/home/r15543056/trajectory_forecast/DT-GPT}"
 cd "${REPO_ROOT}"
 
 mkdir -p logs
 
-# Default r=32 candidate: double r=16 capacity, keep alpha/r=2, preserve the
-# previous effective batch size with one L40S: 1 GPU * batch 1 * grad_acc 16.
+# Format: lora_r,lora_alpha,gradient_accumulation,num_train_epochs,learning_rate
+# r=64, alpha=128 (ratio=2), grad_acc=8, 1 epoch, lr=1e-4 (smoke-validated).
 export DTGPT_RESUME_FROM_CHECKPOINT="${DTGPT_RESUME_FROM_CHECKPOINT:-}"
-export DTGPT_MAX_STEPS="${DTGPT_MAX_STEPS:-500}"
+export DTGPT_MAX_STEPS="${DTGPT_MAX_STEPS:--1}"
 export DTGPT_CONDA_ENV="${DTGPT_CONDA_ENV:-dtgpt-vllm}"
 export DTGPT_PATIENT_SPLIT_FRACTION="${DTGPT_PATIENT_SPLIT_FRACTION:-0.5}"
-export DTGPT_SWEEP_CONFIGS="${DTGPT_SWEEP_CONFIGS:-32,64,16,3,8e-6}"
+export DTGPT_SWEEP_CONFIGS="${DTGPT_SWEEP_CONFIGS:-64,128,8,1,1e-4}"
 export DTGPT_LORA_DROPOUT="${DTGPT_LORA_DROPOUT:-0.05}"
 export DTGPT_SEQ_MAX_LEN="${DTGPT_SEQ_MAX_LEN:-2048}"
 export DTGPT_ATTN_IMPLEMENTATION="${DTGPT_ATTN_IMPLEMENTATION:-sdpa}"
 export DTGPT_NUM_SAMPLES_TO_GENERATE="${DTGPT_NUM_SAMPLES_TO_GENERATE:-1}"
-export DTGPT_MAX_NEW_TOKENS="${DTGPT_MAX_NEW_TOKENS:-128}"
+export DTGPT_MAX_NEW_TOKENS="${DTGPT_MAX_NEW_TOKENS:-256}"
 export DTGPT_TRAIN_BATCH_SIZE="${DTGPT_TRAIN_BATCH_SIZE:-1}"
 export DTGPT_VALIDATION_BATCH_SIZE="${DTGPT_VALIDATION_BATCH_SIZE:-1}"
 export DTGPT_GRADIENT_CHECKPOINTING="${DTGPT_GRADIENT_CHECKPOINTING:-1}"
@@ -61,21 +60,24 @@ export DTGPT_VALIDATION_MAX_SAMPLES="${DTGPT_VALIDATION_MAX_SAMPLES:-}"
 export DTGPT_TEST_MAX_SAMPLES="${DTGPT_TEST_MAX_SAMPLES:-}"
 
 if [ -n "${DTGPT_RESUME_FROM_CHECKPOINT}" ]; then
-    echo "This r=32 full-validation job must start a fresh adapter; unset DTGPT_RESUME_FROM_CHECKPOINT." >&2
+    echo "This r=64 full-training job must start a fresh adapter; unset DTGPT_RESUME_FROM_CHECKPOINT." >&2
     exit 1
 fi
 
 if [ "${DTGPT_NPROC_PER_NODE}" != "1" ]; then
-    echo "This r=32 full-validation wrapper requests exactly 1 GPU; set DTGPT_NPROC_PER_NODE=1." >&2
+    echo "This r=64 full-training wrapper requires exactly 1 GPU (Unsloth single-GPU); set DTGPT_NPROC_PER_NODE=1." >&2
     exit 1
 fi
 
 cat <<CONFIG
-Full-validation r=32 DoRA run
-  Max steps: ${DTGPT_MAX_STEPS}
+Full-training r=64 DoRA run (smoke-validated, job 38150)
+  Rank / Alpha: 64 / 128  (ratio=2, DoRA enabled)
+  Learning rate: 1e-4  (cosine schedule, smoke eval_loss 0.665->0.610)
+  Grad accumulation: 8  (effective batch size = 8)
+  Max steps: ${DTGPT_MAX_STEPS}  (-1 = run full epoch from sweep config)
   Sweep configs: ${DTGPT_SWEEP_CONFIGS}
   LoRA dropout: ${DTGPT_LORA_DROPOUT}
-  Patient split fraction: ${DTGPT_PATIENT_SPLIT_FRACTION}
+  Patient split fraction: ${DTGPT_PATIENT_SPLIT_FRACTION}  (full dataset)
   Train sample cap: ${DTGPT_TRAIN_MAX_SAMPLES:-none}
   Validation sample cap: ${DTGPT_VALIDATION_MAX_SAMPLES:-none}
   Test sample cap: ${DTGPT_TEST_MAX_SAMPLES:-none}
@@ -83,7 +85,7 @@ Full-validation r=32 DoRA run
   Sequence max length: ${DTGPT_SEQ_MAX_LEN}
   Logging steps: ${DTGPT_LOGGING_STEPS}
   Resume checkpoint: <fresh adapter; none>
-  Node/GPU request: node-201, 1 L40S
+  Node/GPU request: node-201, 1 L40S (48 GB)
   CPU/memory request: 8 CPUs, 48G, exclusive node to avoid memory contention
   Training mode: Unsloth 4-bit DoRA adapter training; distributed/DeepSpeed disabled
 CONFIG
