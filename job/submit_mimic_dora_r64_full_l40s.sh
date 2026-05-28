@@ -6,7 +6,6 @@
 #SBATCH --nodelist=node-201
 #SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:1
-#SBATCH --exclusive
 #SBATCH --mem=48G
 #SBATCH --time=7-0:0
 #SBATCH --output=logs/mimic_dora_r64_full_%j.out
@@ -19,6 +18,9 @@ set -euo pipefail
 # Rank=64, Alpha=128 (alpha/r=2), LR=1e-4 (cosine schedule, validated stable).
 # Grad_acc=8 → effective batch size=8. Single L40S; no DeepSpeed/distributed.
 # Runs full epoch (-1 steps = use num_train_epochs from sweep config).
+# Lock to the single GPU Slurm assigned; prevents Unsloth from seeing GPU 1
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
+
 REPO_ROOT="${DTGPT_REPO_ROOT:-/share/home/r15543056/trajectory_forecast/DT-GPT}"
 cd "${REPO_ROOT}"
 
