@@ -34,5 +34,11 @@
 .codex
 .gemini
 .agents
-.trellis
 .codex.bak
+
+# trellis runtime and local-only caches
+.trellis/.backup-*
+.trellis/worktrees/
+.trellis/.template-hashes.json
+.trellis/.runtime/
+.trellis/.cache/
