@@ -30,3 +30,9 @@
 # local git worktrees
 /.worktrees/
 .worktrees/
+
+.codex
+.gemini
+.agents
+.trellis
+.codex.bak

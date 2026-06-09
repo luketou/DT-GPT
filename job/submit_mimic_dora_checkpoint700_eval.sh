@@ -1,13 +1,13 @@
 #!/bin/bash
-#SBATCH --job-name="dtgpt-mimic-dora-eval700"
+#SBATCH --job-name="dtgpt-mimic-dora-eval5602"
 #SBATCH --partition=l40s
 #SBATCH --account=l40s
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:1
 #SBATCH --time=7-0:0
-#SBATCH --output=logs/mimic_dora_eval700_%j.out
-#SBATCH --error=logs/mimic_dora_eval700_%j.err
+#SBATCH --output=logs/mimic_dora_eval5602_%j.out
+#SBATCH --error=logs/mimic_dora_eval5602_%j.err
 #SBATCH --chdir=/share/home/r15543056/trajectory_forecast/DT-GPT
 
 set -euo pipefail
@@ -55,7 +55,7 @@ fi
 unset TRANSFORMERS_CACHE
 
 EVAL_SCRIPT="1_experiments/2024_02_08_mimic_iv/4_dt_gpt_instruction/2024_04_11_biomistral_td_bd_summarized_row/2024_04_15_dt_gpt_bd_bm_summarized_row_mimic_eval.py"
-CHECKPOINT_PATH="${DTGPT_EVAL_MODEL_PATH:-${REPO_ROOT}/3_results/raw_experiments/DT-GPTsetup/setup/2026_05_04___20_28_41_718957/models/checkpoint-700}"
+CHECKPOINT_PATH="${DTGPT_EVAL_MODEL_PATH:-${REPO_ROOT}/3_results/raw_experiments/DT-GPTsetup/setup/2026_06_03___00_41_58_574883/models/checkpoint-5602}"
 
 echo "Python binary: ${PYTHON_BIN}"
 echo "Conda environment: ${CONDA_ENV_NAME}"

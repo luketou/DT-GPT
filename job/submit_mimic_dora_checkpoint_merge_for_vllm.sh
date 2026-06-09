@@ -40,7 +40,7 @@ mkdir -p "${HF_HOME}" "${TRITON_CACHE_DIR}" "${MPLCONFIGDIR}"
 if command -v conda >/dev/null 2>&1; then
     CONDA_BASE="$(conda info --base)"
     source "${CONDA_BASE}/etc/profile.d/conda.sh"
-    conda activate dtgpt-unsloth
+    conda activate dtgpt-vllm
     PYTHON_BIN="$(command -v python)"
 else
     echo "conda is not available in this job environment."
@@ -50,8 +50,8 @@ unset TRANSFORMERS_CACHE
 
 # CHECKPOINT_PATH="${DTGPT_EVAL_MODEL_PATH:-${REPO_ROOT}/3_results/raw_experiments/DT-GPTsetup/setup/2026_05_04___20_28_41_718957/models/checkpoint-700}"
 # MERGED_MODEL_PATH="${DTGPT_VLLM_FULL_MODEL_PATH:-${REPO_ROOT}/3_results/raw_experiments/DT-GPTsetup/setup/2026_05_04___20_28_41_718957/models/checkpoint-700-merged-vllm}"
-CHECKPOINT_PATH="${DTGPT_EVAL_MODEL_PATH:-/share/home/r15543056/trajectory_forecast/DT-GPT/3_results/raw_experiments/DT-GPTsetup/setup/2026_05_05___16_46_44_938674/models/checkpoint-1395}"
-MERGED_MODEL_PATH="${DTGPT_VLLM_FULL_MODEL_PATH:-/share/home/r15543056/trajectory_forecast/DT-GPT/3_results/raw_experiments/DT-GPTsetup/setup/2026_05_05___16_46_44_938674/models/checkpoint-1395-merged-vllm}"
+CHECKPOINT_PATH="${DTGPT_EVAL_MODEL_PATH:-${REPO_ROOT}/3_results/checkpoint/checkpoint-5602-4epoch}"
+MERGED_MODEL_PATH="${DTGPT_VLLM_FULL_MODEL_PATH:-${REPO_ROOT}/3_results/checkpoint/merge_for_vllm/checkpoint-5602-4epoch-merged-vllm}"
 echo "Python binary: ${PYTHON_BIN}"
 echo "Base model: ${DTGPT_BIOMISTRAL_MODEL_PATH}"
 echo "Adapter checkpoint: ${CHECKPOINT_PATH}"

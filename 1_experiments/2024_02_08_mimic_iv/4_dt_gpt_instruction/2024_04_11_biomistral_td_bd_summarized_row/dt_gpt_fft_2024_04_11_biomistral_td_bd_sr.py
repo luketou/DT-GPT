@@ -1,6 +1,7 @@
 import __init__
 import os
 import sys
+import shutil
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -24,7 +25,7 @@ from pipeline.DFConversionHelpers import iter_converted_tuples, log_memory_usage
 from pipeline.data_processors.DataProcessorBiomistral import DataProcessorBiomistral
 from pipeline.NormalizationFilterManager import Only_Double3_sigma_Filtering
 import torch
-from transformers import AutoModelForCausalLM
+from transformers import AutoModelForCausalLM, TrainerCallback
 from peft import PeftModel
 from pipeline.hf_training_args import create_training_arguments
 import gc
@@ -62,6 +63,52 @@ from pipeline.distributed_dataset_cache import (
 from datasets import load_from_disk
 
 
+class PreserveEpochCheckpointCallback(TrainerCallback):
+    """Copy selected epoch-end checkpoints outside HF checkpoint rotation."""
+
+    def __init__(self, epochs_to_preserve):
+        self.epochs_to_preserve = {int(epoch) for epoch in epochs_to_preserve if int(epoch) >= 1}
+        self._preserved_epochs = set()
+
+    def on_save(self, args, state, control, **kwargs):
+        if not self.epochs_to_preserve or not getattr(state, "is_world_process_zero", True):
+            return control
+        if state.epoch is None:
+            return control
+
+        epoch_value = float(state.epoch)
+        rounded_epoch = round(epoch_value)
+        if abs(epoch_value - rounded_epoch) > 1e-3:
+            return control
+        if rounded_epoch not in self.epochs_to_preserve or rounded_epoch in self._preserved_epochs:
+            return control
+
+        source_checkpoint_dir = Path(args.output_dir) / f"checkpoint-{state.global_step}"
+        if not source_checkpoint_dir.exists():
+            logging.warning(
+                "Epoch %s preservation skipped because checkpoint directory does not exist: %s",
+                rounded_epoch,
+                source_checkpoint_dir,
+            )
+            return control
+
+        preserved_root = Path(args.output_dir) / "preserved_epoch_checkpoints"
+        preserved_root.mkdir(parents=True, exist_ok=True)
+        destination_dir = preserved_root / f"epoch-{rounded_epoch}-step-{state.global_step}"
+        if destination_dir.exists():
+            self._preserved_epochs.add(rounded_epoch)
+            return control
+
+        shutil.copytree(source_checkpoint_dir, destination_dir)
+        logging.info(
+            "Preserved epoch %s checkpoint outside HF rotation: %s -> %s",
+            rounded_epoch,
+            source_checkpoint_dir,
+            destination_dir,
+        )
+        self._preserved_epochs.add(rounded_epoch)
+        return control
+
 
 class DTGPT_mimic_biomistral_fft_ti_bd_sr:
 
@@ -74,6 +121,7 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
                 logging_steps=10,
                 max_steps=-1,
                 resume_from_checkpoint=None,
+                preserve_epoch_checkpoints=None,
                 nr_days_forecasting=91, seq_max_len_in_tokens=4000, decimal_precision=1,
                 gen_num_beams=1, gen_do_sample=False,
                 eval_model_path=None,
@@ -119,6 +167,9 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
         rank = int(os.environ.get("RANK", "0"))
         is_distributed = int(os.environ.get("WORLD_SIZE", "1")) > 1
         is_main_process = rank == 0
+        preserve_epoch_checkpoints = sorted(
+            {int(epoch) for epoch in (preserve_epoch_checkpoints or []) if int(epoch) >= 1}
+        )
 
         def checkpoint_has_deepspeed_state(checkpoint_path):
             if checkpoint_path is None:
@@ -671,6 +722,9 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
                 sft_trainer_kwargs["dataset_num_proc"] = sft_dataset_num_proc
 
             trainer = SFTTrainer(**sft_trainer_kwargs)
+            if preserve_epoch_checkpoints:
+                trainer.add_callback(PreserveEpochCheckpointCallback(preserve_epoch_checkpoints))
+                logging.info("Configured preserved epoch checkpoints: %s", preserve_epoch_checkpoints)
 
 
             ######################################################## TRAINING ########################################################

@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name="dtgpt-mimic-dora-eval700-shard"
+#SBATCH --job-name="dtgpt-mimic-dora-eval-shard"
 #SBATCH --partition=l40s
 #SBATCH --account=l40s
 #SBATCH --nodes=1

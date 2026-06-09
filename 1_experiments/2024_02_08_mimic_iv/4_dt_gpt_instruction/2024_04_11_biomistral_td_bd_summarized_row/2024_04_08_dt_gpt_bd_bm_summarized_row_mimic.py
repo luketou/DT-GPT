@@ -46,6 +46,21 @@ def positive_int(value):
     return parsed
 
 
+def parse_epoch_list(value):
+    if value is None:
+        return None
+    stripped = value.strip()
+    if not stripped:
+        return []
+    epochs = []
+    for token in stripped.split(","):
+        parsed = int(token.strip())
+        if parsed < 1:
+            raise argparse.ArgumentTypeError("epoch values must be >= 1")
+        epochs.append(parsed)
+    return epochs
+
+
 def build_parser():
     parser = argparse.ArgumentParser(description="Train DT-GPT on MIMIC-IV with BioMistral.")
     parser.add_argument("--debug", action="store_true", help="Disable WandB logging.")
@@ -56,6 +71,12 @@ def build_parser():
     parser.add_argument("--num-train-epochs", type=float, default=5)
     parser.add_argument("--max-steps", type=int, default=-1)
     parser.add_argument("--resume-from-checkpoint", type=str, default=None)
+    parser.add_argument(
+        "--preserve-epoch-checkpoints",
+        type=parse_epoch_list,
+        default=None,
+        help="Comma-separated epoch numbers whose checkpoints should be copied outside HF rotation.",
+    )
     parser.add_argument("--eval-interval", type=float, default=0.1)
     parser.add_argument("--warmup-ratio", type=float, default=0.10)
     parser.add_argument("--seq-max-len", type=int, default=3400)
@@ -121,6 +142,7 @@ def main():
         num_train_epochs=args.num_train_epochs,
         max_steps=args.max_steps,
         resume_from_checkpoint=args.resume_from_checkpoint,
+        preserve_epoch_checkpoints=args.preserve_epoch_checkpoints,
         eval_interval=args.eval_interval,
         warmup_ratio=args.warmup_ratio,
         lr_scheduler="cosine",

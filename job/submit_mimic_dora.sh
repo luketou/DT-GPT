@@ -116,6 +116,7 @@ TRAIN_MAX_SAMPLES="${DTGPT_TRAIN_MAX_SAMPLES:-}"
 VALIDATION_MAX_SAMPLES="${DTGPT_VALIDATION_MAX_SAMPLES:-}"
 SKIP_EVAL="${DTGPT_SKIP_EVAL:-0}"
 DEBUG_MODE="${DTGPT_DEBUG:-0}"
+PRESERVE_EPOCH_CHECKPOINTS="${DTGPT_PRESERVE_EPOCH_CHECKPOINTS:-}"
 
 DEFAULT_SWEEP_CONFIGS=(
     # Format: lora_r,lora_alpha,gradient_accumulation,num_train_epochs,learning_rate
@@ -166,6 +167,7 @@ echo "Test max patients: ${TEST_MAX_PATIENTS:-none}"
 echo "Train max samples: ${TRAIN_MAX_SAMPLES:-none}"
 echo "Validation max samples: ${VALIDATION_MAX_SAMPLES:-none}"
 echo "Skip eval after training: ${SKIP_EVAL}"
+echo "Preserve epoch checkpoints: ${PRESERVE_EPOCH_CHECKPOINTS:-none}"
 echo "Debug/WandB disabled: ${DEBUG_MODE}"
 if [ -n "${RESUME_FROM_CHECKPOINT}" ]; then
     echo "Resume from checkpoint: ${RESUME_FROM_CHECKPOINT}"
@@ -255,6 +257,7 @@ for raw_config in "${SWEEP_CONFIGS[@]}"; do
     DATA_LIMIT_FLAGS=()
     SKIP_EVAL_FLAG=()
     DEBUG_FLAG=()
+    PRESERVE_EPOCH_CHECKPOINTS_FLAG=()
     RUNNER=("${PYTHON_BIN}")
     if [ "${USE_DORA}" = "1" ]; then
         DORA_FLAG=(--use-dora)
@@ -289,6 +292,9 @@ for raw_config in "${SWEEP_CONFIGS[@]}"; do
     if [ "${DEBUG_MODE}" = "1" ]; then
         DEBUG_FLAG=(--debug)
     fi
+    if [ -n "${PRESERVE_EPOCH_CHECKPOINTS}" ]; then
+        PRESERVE_EPOCH_CHECKPOINTS_FLAG=(--preserve-epoch-checkpoints "${PRESERVE_EPOCH_CHECKPOINTS}")
+    fi
     if [ "${USE_DEEPSPEED}" = "1" ]; then
         DEEPSPEED_FLAG=(--deepspeed-config "${DEEPSPEED_CONFIG}")
     fi
@@ -313,6 +319,7 @@ for raw_config in "${SWEEP_CONFIGS[@]}"; do
         --num-train-epochs "${num_train_epochs}" \
         --max-steps "${MAX_STEPS}" \
         "${RESUME_FLAG[@]}" \
+        "${PRESERVE_EPOCH_CHECKPOINTS_FLAG[@]}" \
         "${DATA_LIMIT_FLAGS[@]}" \
         "${SKIP_EVAL_FLAG[@]}" \
         --seq-max-len "${SEQ_MAX_LEN}" \
