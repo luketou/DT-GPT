@@ -112,6 +112,24 @@ def build_parser():
     parser.add_argument("--test-max-patients", type=int, default=None)
     parser.add_argument("--train-max-samples", type=int, default=None)
     parser.add_argument("--validation-max-samples", type=int, default=None)
+    parser.add_argument(
+        "--dataset-cache-mode",
+        choices=["auto", "build-only", "require"],
+        default="auto",
+        help="auto builds missing tokenized cache, build-only creates it then exits, require loads only an existing complete cache.",
+    )
+    parser.add_argument(
+        "--dataset-cache-name",
+        type=str,
+        default=None,
+        help="Name for the tokenized train/validation cache. Defaults to a manifest-derived name.",
+    )
+    parser.add_argument(
+        "--dataset-cache-build-chunk-size",
+        type=positive_int,
+        default=int(os.environ.get("DTGPT_DATASET_CACHE_BUILD_CHUNK_SIZE", "256")),
+        help="Number of split samples converted/tokenized per cache-build chunk.",
+    )
     parser.add_argument("--skip-eval", action="store_true")
     parser.add_argument("--local-rank", "--local_rank", type=int, default=-1)
     parser.add_argument("--prediction-url", type=str, default="http://127.0.0.1:18101/v1/")
@@ -155,6 +173,9 @@ def main():
         test_max_patients=args.test_max_patients,
         train_max_samples=args.train_max_samples,
         validation_max_samples=args.validation_max_samples,
+        dataset_cache_mode=args.dataset_cache_mode,
+        dataset_cache_name=args.dataset_cache_name,
+        dataset_cache_build_chunk_size=args.dataset_cache_build_chunk_size,
         skip_eval=args.skip_eval,
         nr_days_forecasting=91,
         seq_max_len_in_tokens=args.seq_max_len,

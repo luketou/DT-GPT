@@ -1,4 +1,5 @@
 import __init__
+import hashlib
 import os
 import sys
 import shutil
@@ -39,6 +40,7 @@ from pipeline.NormalizationFilterManager import Only_Standardization
 from pipeline.local_paths import (
     get_biomistral_model_path,
     get_mimic_column_descriptive_mapping_path,
+    get_mimic_constants_path,
     get_mimic_dataset_statistics_path,
     get_model_load_kwargs,
     get_precision_config,
@@ -52,15 +54,17 @@ from pipeline.lora_helpers import (
 )
 from pipeline.evaluation_shards import shard_suffix, slice_by_shard
 from pipeline.distributed_dataset_cache import (
+    MANIFEST_FILE,
     TRAIN_SPLIT,
     VALIDATION_SPLIT,
     build_dataset_cache_dir,
     dataset_cache_complete,
     dataset_cache_paths,
+    dataset_cache_temp_dir,
     mark_dataset_cache_complete,
     wait_for_dataset_cache_complete,
 )
-from datasets import load_from_disk
+from datasets import concatenate_datasets, load_from_disk
 
 
 class PreserveEpochCheckpointCallback(TrainerCallback):
@@ -141,6 +145,9 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
                 test_max_patients=None,
                 train_max_samples=None,
                 validation_max_samples=None,
+                dataset_cache_mode="auto",
+                dataset_cache_name=None,
+                dataset_cache_build_chunk_size=256,
                 skip_eval=False,
                 eval_backend="vllm",
                 eval_shard_index=0,
@@ -167,6 +174,10 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
         rank = int(os.environ.get("RANK", "0"))
         is_distributed = int(os.environ.get("WORLD_SIZE", "1")) > 1
         is_main_process = rank == 0
+        if dataset_cache_mode not in {"auto", "build-only", "require"}:
+            raise ValueError("dataset_cache_mode must be one of: auto, build-only, require")
+        if dataset_cache_build_chunk_size <= 0:
+            raise ValueError("dataset_cache_build_chunk_size must be positive")
         preserve_epoch_checkpoints = sorted(
             {int(epoch) for epoch in (preserve_epoch_checkpoints or []) if int(epoch) >= 1}
         )
@@ -300,11 +311,113 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
             test_full_paths, test_full_patientids, test_max_patients, "test"
         )
 
-        # Load data
-        training_full_constants, training_full_events = eval_manager.load_list_of_patient_dfs_and_constants(training_full_patientids)
-        validation_full_constants, validation_full_events = eval_manager.load_list_of_patient_dfs_and_constants(validation_full_patientids)
-        test_full_constants, test_full_events = eval_manager.load_list_of_patient_dfs_and_constants(test_full_patientids)
-        log_memory_usage("after-loading-train-validation-test-dfs")
+        target_cols = eval_manager.get_column_usage()[2]
+        split_fraction = os.environ.get("DTGPT_PATIENT_SPLIT_FRACTION", "default")
+        dataset_cache_manifest = {
+            "cache_format_version": 2,
+            "train_set": train_set,
+            "validation_set": validation_set,
+            "patient_split_fraction": split_fraction,
+            "seq_max_len": SEQUENCE_MAX_LENGTH_IN_TOKENS,
+            "decimal_precision": DECIMAL_PRECISION,
+            "tokenizer_path": MODEL_HF_NAME,
+            "target_variables": target_cols,
+            "normalization_statistics_path": str(get_mimic_dataset_statistics_path()),
+            "train_max_patients": train_max_patients,
+            "validation_max_patients": validation_max_patients,
+            "train_max_samples": train_max_samples,
+            "validation_max_samples": validation_max_samples,
+            "df_conversion_n_jobs": df_conversion_n_jobs,
+            "sft_dataset_num_proc": sft_dataset_num_proc,
+            "code_version": os.environ.get("DTGPT_CODE_VERSION", "unknown"),
+        }
+        manifest_json = json.dumps(dataset_cache_manifest, sort_keys=True, separators=(",", ":"))
+        manifest_hash = hashlib.sha256(manifest_json.encode("utf-8")).hexdigest()[:12]
+        if dataset_cache_name is None:
+            try:
+                split_name = str(int(round(float(split_fraction) * 100)))
+            except ValueError:
+                split_name = str(split_fraction).replace(".", "p")
+            dataset_cache_name = (
+                f"mimic_tokenized_seq{SEQUENCE_MAX_LENGTH_IN_TOKENS}"
+                f"_split{split_name}_dp{DECIMAL_PRECISION}_{manifest_hash}"
+            )
+        dataset_cache_manifest["manifest_hash"] = manifest_hash
+        dataset_cache_manifest["cache_name"] = dataset_cache_name
+        dataset_cache_root = os.environ.get("DTGPT_DATASET_CACHE_ROOT")
+        if dataset_cache_root:
+            dataset_cache_dir = Path(dataset_cache_root) / dataset_cache_name
+        else:
+            dataset_cache_dir = build_dataset_cache_dir(
+                experiment.get_experiment_folder(),
+                dataset_cache_name,
+            )
+        dataset_paths = dataset_cache_paths(dataset_cache_dir)
+        dataset_cache_is_complete = dataset_cache_complete(dataset_cache_dir)
+        dataset_cache_manifest_matches = False
+        if dataset_cache_is_complete:
+            cached_manifest_path = dataset_cache_dir / MANIFEST_FILE
+            with open(cached_manifest_path, encoding="utf-8") as handle:
+                cached_manifest = json.load(handle)
+            dataset_cache_manifest_matches = cached_manifest.get("manifest_hash") == manifest_hash
+            if not dataset_cache_manifest_matches:
+                logging.warning(
+                    "Tokenized dataset cache manifest mismatch at %s: expected hash %s, found %s",
+                    cached_manifest_path,
+                    manifest_hash,
+                    cached_manifest.get("manifest_hash"),
+                )
+                if dataset_cache_mode in {"auto", "build-only"}:
+                    dataset_cache_is_complete = False
+        if is_main_process:
+            logging.info(
+                "Dataset cache mode=%s name=%s path=%s complete=%s manifest_matches=%s",
+                dataset_cache_mode,
+                dataset_cache_name,
+                dataset_cache_dir,
+                dataset_cache_is_complete,
+                dataset_cache_manifest_matches,
+            )
+
+        if eval_model_path is None and dataset_cache_mode == "require" and not dataset_cache_is_complete:
+            raise RuntimeError(
+                "Required tokenized dataset cache is missing or incomplete: "
+                f"{dataset_cache_dir}. Build it first with "
+                "job/submit_mimic_build_tokenized_cache_cpu.sh "
+                "or rerun with --dataset-cache-mode build-only."
+            )
+        if eval_model_path is None and dataset_cache_mode == "require" and not dataset_cache_manifest_matches:
+            raise RuntimeError(
+                "Required tokenized dataset cache manifest does not match current settings: "
+                f"{dataset_cache_dir / MANIFEST_FILE}. Build a matching cache first with "
+                "job/submit_mimic_build_tokenized_cache_cpu.sh."
+            )
+
+        should_load_training_validation_dfs = (
+            eval_model_path is None
+            and dataset_cache_mode != "require"
+            and not dataset_cache_is_complete
+        )
+        should_load_test_dfs = not skip_eval
+
+        training_full_constants = []
+        training_full_events = []
+        validation_full_constants = []
+        validation_full_events = []
+        test_full_constants = []
+        test_full_events = []
+
+        if should_load_training_validation_dfs:
+            training_full_constants, training_full_events = eval_manager.load_list_of_patient_dfs_and_constants(training_full_patientids)
+            validation_full_constants, validation_full_events = eval_manager.load_list_of_patient_dfs_and_constants(validation_full_patientids)
+        else:
+            logging.info("Skipping train/validation raw DF load because tokenized cache will be used.")
+
+        if should_load_test_dfs:
+            test_full_constants, test_full_events = eval_manager.load_list_of_patient_dfs_and_constants(test_full_patientids)
+        else:
+            logging.info("Skipping test raw DF load because skip_eval=True.")
+        log_memory_usage("after-conditional-raw-df-load")
 
         # Setup splitter object
         splitter = After24HSplitter()
@@ -323,29 +436,40 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
             )
             return events[:limited_count], meta_data[:limited_count]
 
-        if eval_model_path is None:
+        training_events = []
+        training_meta_data = []
+        if should_load_training_validation_dfs:
             training_events, training_meta_data = splitter.setup_split_indices(training_full_events, eval_manager)
             training_events, training_meta_data = limit_events(
                 training_events, training_meta_data, train_max_samples, "train"
             )
 
         # Setup also validation and test
-        validation_events, validation_meta = splitter.setup_split_indices(validation_full_events, eval_manager)
-        validation_events, validation_meta = limit_events(
-            validation_events, validation_meta, validation_max_samples, "validation"
-        )
+        validation_events = []
+        validation_meta = []
+        if should_load_training_validation_dfs:
+            validation_events, validation_meta = splitter.setup_split_indices(validation_full_events, eval_manager)
+            validation_events, validation_meta = limit_events(
+                validation_events, validation_meta, validation_max_samples, "validation"
+            )
 
-        test_events, test_meta = splitter.setup_split_indices(test_full_events, eval_manager)
-        test_events_full_count = len(test_events)
-        test_events, test_meta = slice_by_shard(
-            test_events,
-            test_meta,
-            shard_index=eval_shard_index,
-            num_shards=eval_num_shards,
-        )
-        if eval_max_samples is not None:
-            test_events = test_events[:eval_max_samples]
-            test_meta = test_meta[:eval_max_samples]
+        test_events = []
+        test_meta = []
+        test_events_full_count = 0
+        if should_load_test_dfs:
+            test_events, test_meta = splitter.setup_split_indices(test_full_events, eval_manager)
+            test_events_full_count = len(test_events)
+            test_events, test_meta = slice_by_shard(
+                test_events,
+                test_meta,
+                shard_index=eval_shard_index,
+                num_shards=eval_num_shards,
+            )
+            if eval_max_samples is not None:
+                test_events = test_events[:eval_max_samples]
+                test_meta = test_meta[:eval_max_samples]
+        else:
+            test_events_full_count = 0
         test_set_output_name = test_set + shard_suffix(eval_shard_index, eval_num_shards)
         logging.info(
             "Using eval backend %s; test shard %s/%s contains %s of %s samples; eval_max_samples=%s",
@@ -435,7 +559,12 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
         constant_column_mapping = {}
 
         # Get random constant row
-        constant_row = training_full_constants[0]
+        if training_full_constants:
+            constant_row = training_full_constants[0]
+        elif test_full_constants:
+            constant_row = test_full_constants[0]
+        else:
+            constant_row = pd.read_csv(get_mimic_constants_path(), nrows=1)
         constant_columns = constant_row.columns.tolist()
         # Get mapping for indications
         for col in constant_columns:
@@ -453,18 +582,20 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
         conversion_function = DTGPTDataFrameConverterTemplateTextBasicDescriptionMIMIC.convert_df_to_strings
 
         if eval_model_path is None:
-            dataset_cache_dir = build_dataset_cache_dir(
-                experiment.get_experiment_folder(),
-                "mimic_train_validation_tokenized",
+            should_build_dataset_cache = (
+                is_main_process
+                and dataset_cache_mode in {"auto", "build-only"}
+                and not dataset_cache_is_complete
             )
-            dataset_paths = dataset_cache_paths(dataset_cache_dir)
-            should_build_dataset_cache = is_main_process and not dataset_cache_complete(dataset_cache_dir)
 
-            if is_main_process and dataset_cache_complete(dataset_cache_dir):
+            if is_main_process and dataset_cache_is_complete:
                 logging.info("Using existing tokenized dataset cache at %s", dataset_cache_dir)
-                del training_full_constants, training_full_events
-                del validation_full_constants, validation_full_events
-                del training_events, validation_events
+                if training_full_constants or training_full_events:
+                    del training_full_constants, training_full_events
+                if validation_full_constants or validation_full_events:
+                    del validation_full_constants, validation_full_events
+                if training_events or validation_events:
+                    del training_events, validation_events
                 gc.collect()
                 log_memory_usage("rank-main-after-dropping-raw-dfs-for-existing-cache")
 
@@ -474,62 +605,14 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
                     rank,
                     dataset_cache_dir,
                 )
-                del training_full_constants, training_full_events
-                del validation_full_constants, validation_full_events
-                del training_events, validation_events
+                if training_full_constants or training_full_events:
+                    del training_full_constants, training_full_events
+                if validation_full_constants or validation_full_events:
+                    del validation_full_constants, validation_full_events
+                if training_events or validation_events:
+                    del training_events, validation_events
                 gc.collect()
                 log_memory_usage("rank-non-main-after-dropping-raw-dfs-before-cache-wait")
-
-            if should_build_dataset_cache:
-                logging.info("Rank 0 building tokenized dataset cache at %s", dataset_cache_dir)
-                if dataset_cache_dir.exists():
-                    import shutil
-                    shutil.rmtree(dataset_cache_dir)
-
-            # set up all tuples to be used as arguments for the conversion function
-                training_events = [(column_mapping, curr_const_row, true_events_input, true_future_events_input, target_dataframe, filtering_rows_rest_budget, SEQUENCE_MAX_LENGTH_IN_TOKENS, DECIMAL_PRECISION, prompt)
-                                    for curr_const_row, true_events_input, true_future_events_input, target_dataframe in training_events]
-
-
-            #: apply filtering of training data to remove bad outliers
-                training_norm_filter = Only_Double3_sigma_Filtering(path_to_statistics_file)
-
-            #: use the same filtering function but apply to training data
-                training_events = [(x[0], x[1],
-                                        training_norm_filter.normalize_and_filter(x[2].copy(), None, replace_nan_rows=False, replace_missing_in_prediction=False, verbose=False, specific_column_list=["lab_26499_4"])[0],
-                                        x[3],
-                                        training_norm_filter.normalize_and_filter(x[4].copy(), None, replace_nan_rows=False, replace_missing_in_prediction=False, verbose=False)[0],
-                                        x[5], x[6], x[7], x[8], constant_column_mapping) for x in training_events]
-
-                training_records = list(iter_converted_tuples(training_events, conversion_function, log_every=100))
-                if len(training_records) >= 2:
-                    logging.info("Example of input: " + training_records[0]["input_text"])
-                    logging.info("Example of target: " + training_records[0]["target_text"])
-                    logging.info("Example of input: " + training_records[1]["input_text"])
-                    logging.info("Example of target: " + training_records[1]["target_text"])
-                del training_events
-                del training_full_constants, training_full_events
-                gc.collect()
-                log_memory_usage("after-training-string-conversion-and-raw-train-free")
-
-
-            # apply for validation data
-                validation_events_for_tokenization = [(column_mapping, curr_const_row, true_events_input, true_future_events_input, target_dataframe, filtering_rows_rest_budget, SEQUENCE_MAX_LENGTH_IN_TOKENS, DECIMAL_PRECISION, prompt)
-                                                        for curr_const_row, true_events_input, true_future_events_input, target_dataframe in validation_events]
-
-            #: use the same filtering function but apply to training data
-                validation_events_for_tokenization = [(x[0], x[1],
-                                                            training_norm_filter.normalize_and_filter(x[2].copy(), None, replace_nan_rows=False, replace_missing_in_prediction=False, verbose=False, specific_column_list=["lab_26499_4"])[0],
-                                                            x[3],
-                                                            training_norm_filter.normalize_and_filter(x[4].copy(), None, replace_nan_rows=False, replace_missing_in_prediction=False, verbose=False)[0],
-                                                            x[5], x[6], x[7], x[8], constant_column_mapping) for x in validation_events_for_tokenization]
-
-                validation_records = list(iter_converted_tuples(validation_events_for_tokenization, conversion_function, log_every=100))
-                del validation_events_for_tokenization
-                del validation_events
-                del validation_full_constants, validation_full_events
-                gc.collect()
-                log_memory_usage("after-validation-string-conversion-and-raw-validation-free")
 
 
         ######################################################## SETUP DATA PROCESSOR ########################################################
@@ -544,28 +627,159 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
         dp.set_converter(DTGPTDataFrameConverterTemplateTextBasicDescriptionMIMIC)
         dp.set_for_training()
 
-        target_cols = eval_manager.get_column_usage()[2]
         dp.setup_cols(target_cols)
 
         if eval_model_path is None:
             tokenize = True
+
+            def normalize_event_for_tokenization(event_tuple, normalization_filter):
+                curr_const_row, true_events_input, true_future_events_input, target_dataframe = event_tuple
+                normalized_input = normalization_filter.normalize_and_filter(
+                    true_events_input.copy(),
+                    None,
+                    replace_nan_rows=False,
+                    replace_missing_in_prediction=False,
+                    verbose=False,
+                    specific_column_list=["lab_26499_4"],
+                )[0]
+                normalized_target = normalization_filter.normalize_and_filter(
+                    target_dataframe.copy(),
+                    None,
+                    replace_nan_rows=False,
+                    replace_missing_in_prediction=False,
+                    verbose=False,
+                )[0]
+                return (
+                    column_mapping,
+                    curr_const_row,
+                    normalized_input,
+                    true_future_events_input,
+                    normalized_target,
+                    filtering_rows_rest_budget,
+                    SEQUENCE_MAX_LENGTH_IN_TOKENS,
+                    DECIMAL_PRECISION,
+                    prompt,
+                    constant_column_mapping,
+                )
+
+            def save_tokenized_split_cache(raw_events, split_name, output_path, temp_cache_dir, normalization_filter):
+                shard_root = temp_cache_dir / f"{split_name}_shards"
+                if shard_root.exists():
+                    shutil.rmtree(shard_root)
+                shard_root.mkdir(parents=True, exist_ok=True)
+                shard_paths = []
+                total_events = len(raw_events)
+                logging.info(
+                    "Building %s tokenized cache in chunks: samples=%s chunk_size=%s",
+                    split_name,
+                    total_events,
+                    dataset_cache_build_chunk_size,
+                )
+                if total_events == 0:
+                    raise RuntimeError(f"No {split_name} events are available for dataset cache build.")
+
+                for chunk_start in range(0, total_events, dataset_cache_build_chunk_size):
+                    chunk_end = min(chunk_start + dataset_cache_build_chunk_size, total_events)
+                    chunk_index = len(shard_paths)
+                    logging.info(
+                        "Building %s tokenized cache chunk %s covering samples [%s, %s)",
+                        split_name,
+                        chunk_index,
+                        chunk_start,
+                        chunk_end,
+                    )
+                    conversion_args = [
+                        normalize_event_for_tokenization(event_tuple, normalization_filter)
+                        for event_tuple in raw_events[chunk_start:chunk_end]
+                    ]
+                    records = list(iter_converted_tuples(conversion_args, conversion_function, log_every=100))
+                    if split_name == TRAIN_SPLIT and chunk_index == 0 and len(records) >= 2:
+                        logging.info("Example of input: " + records[0]["input_text"])
+                        logging.info("Example of target: " + records[0]["target_text"])
+                        logging.info("Example of input: " + records[1]["input_text"])
+                        logging.info("Example of target: " + records[1]["target_text"])
+
+                    tokenized_chunk = dp.preprocess_converted_records(
+                        records,
+                        tokenize=tokenize,
+                        keep_text_columns=False,
+                    )
+                    shard_path = shard_root / f"shard_{chunk_index:05d}"
+                    tokenized_chunk.save_to_disk(str(shard_path))
+                    shard_paths.append(shard_path)
+                    del conversion_args, records, tokenized_chunk
+                    gc.collect()
+                    log_memory_usage(f"after-saving-{split_name}-tokenized-cache-chunk-{chunk_index}")
+
+                logging.info("Combining %s %s tokenized cache shards", len(shard_paths), split_name)
+                if len(shard_paths) == 1:
+                    combined_dataset = load_from_disk(str(shard_paths[0]))
+                else:
+                    combined_dataset = concatenate_datasets([
+                        load_from_disk(str(shard_path)) for shard_path in shard_paths
+                    ])
+                combined_dataset.save_to_disk(str(output_path))
+                del combined_dataset
+                gc.collect()
+                shutil.rmtree(shard_root)
+                log_memory_usage(f"after-saving-final-{split_name}-tokenized-cache")
+
             if should_build_dataset_cache:
-                training_dataset = dp.preprocess_converted_records(training_records, tokenize=tokenize, keep_text_columns=False)
-                del training_records
-                gc.collect()
-                log_memory_usage("after-training-tokenization-and-record-free")
+                logging.info("Rank 0 building tokenized dataset cache at %s", dataset_cache_dir)
+                temp_cache_dir = dataset_cache_temp_dir(dataset_cache_dir)
+                if temp_cache_dir.exists():
+                    shutil.rmtree(temp_cache_dir)
+                temp_cache_dir.mkdir(parents=True, exist_ok=True)
+                temp_dataset_paths = dataset_cache_paths(temp_cache_dir)
 
-                validation_dataset = dp.preprocess_converted_records(validation_records, tokenize=tokenize, keep_text_columns=False)
-                del validation_records
+                training_norm_filter = Only_Double3_sigma_Filtering(path_to_statistics_file)
+                save_tokenized_split_cache(
+                    training_events,
+                    TRAIN_SPLIT,
+                    temp_dataset_paths[TRAIN_SPLIT],
+                    temp_cache_dir,
+                    training_norm_filter,
+                )
+                del training_events
+                if training_full_constants or training_full_events:
+                    del training_full_constants, training_full_events
                 gc.collect()
-                log_memory_usage("after-validation-tokenization-and-record-free")
+                log_memory_usage("after-training-tokenized-cache-build-and-raw-train-free")
 
-                training_dataset.save_to_disk(str(dataset_paths[TRAIN_SPLIT]))
-                validation_dataset.save_to_disk(str(dataset_paths[VALIDATION_SPLIT]))
-                mark_dataset_cache_complete(dataset_cache_dir)
+                save_tokenized_split_cache(
+                    validation_events,
+                    VALIDATION_SPLIT,
+                    temp_dataset_paths[VALIDATION_SPLIT],
+                    temp_cache_dir,
+                    training_norm_filter,
+                )
+                del validation_events
+                if validation_full_constants or validation_full_events:
+                    del validation_full_constants, validation_full_events
+                gc.collect()
+                log_memory_usage("after-validation-tokenized-cache-build-and-raw-validation-free")
+
+                manifest_path = temp_cache_dir / MANIFEST_FILE
+                manifest_path.write_text(
+                    json.dumps(dataset_cache_manifest, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+                mark_dataset_cache_complete(temp_cache_dir)
+                old_cache_dir = dataset_cache_dir.with_name(dataset_cache_dir.name + ".old")
+                if old_cache_dir.exists():
+                    shutil.rmtree(old_cache_dir)
+                if dataset_cache_dir.exists():
+                    dataset_cache_dir.rename(old_cache_dir)
+                try:
+                    temp_cache_dir.rename(dataset_cache_dir)
+                except Exception:
+                    if old_cache_dir.exists() and not dataset_cache_dir.exists():
+                        old_cache_dir.rename(dataset_cache_dir)
+                    raise
+                if old_cache_dir.exists():
+                    shutil.rmtree(old_cache_dir)
                 logging.info("Saved tokenized dataset cache at %s", dataset_cache_dir)
 
-                del training_dataset, validation_dataset
                 gc.collect()
                 log_memory_usage("after-saving-tokenized-dataset-cache")
 
@@ -574,6 +788,12 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
 
             if not dataset_cache_complete(dataset_cache_dir):
                 raise RuntimeError(f"Tokenized dataset cache was not created: {dataset_cache_dir}")
+
+            if dataset_cache_mode == "build-only":
+                logging.info("Dataset cache build-only mode complete; exiting before model load/training.")
+                if is_main_process and wandb.run is not None:
+                    wandb.run.finish()
+                return
 
             logging.info("Loading tokenized dataset cache from %s", dataset_cache_dir)
             training_dataset = load_from_disk(str(dataset_paths[TRAIN_SPLIT]))

@@ -3,7 +3,6 @@
 #SBATCH --partition=l40s
 #SBATCH --account=l40s
 #SBATCH --nodes=1
-#SBATCH --nodelist=node-201
 #SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:1
 #SBATCH --mem=48G
@@ -67,6 +66,10 @@ export DTGPT_PRESERVE_EPOCH_CHECKPOINTS="${DTGPT_PRESERVE_EPOCH_CHECKPOINTS:-1}"
 export DTGPT_TRAIN_MAX_SAMPLES="${DTGPT_TRAIN_MAX_SAMPLES:-}"
 export DTGPT_VALIDATION_MAX_SAMPLES="${DTGPT_VALIDATION_MAX_SAMPLES:-}"
 export DTGPT_TEST_MAX_SAMPLES="${DTGPT_TEST_MAX_SAMPLES:-}"
+export DTGPT_DATASET_CACHE_ROOT="${DTGPT_DATASET_CACHE_ROOT:-${REPO_ROOT}/3_cache/dataset_cache}"
+export DTGPT_DATASET_CACHE_MODE="${DTGPT_DATASET_CACHE_MODE:-require}"
+export DTGPT_DATASET_CACHE_NAME="${DTGPT_DATASET_CACHE_NAME:-}"
+export DTGPT_DATASET_CACHE_BUILD_CHUNK_SIZE="${DTGPT_DATASET_CACHE_BUILD_CHUNK_SIZE:-256}"
 
 if [ -n "${DTGPT_RESUME_FROM_CHECKPOINT}" ]; then
     echo "This paper-R2 fine-tune job starts a fresh adapter; unset DTGPT_RESUME_FROM_CHECKPOINT." >&2
@@ -91,11 +94,14 @@ Paper-R2 oriented r=64 DoRA fine-tune
   Train sample cap: ${DTGPT_TRAIN_MAX_SAMPLES:-none}
   Validation sample cap: ${DTGPT_VALIDATION_MAX_SAMPLES:-none}
   Test sample cap: ${DTGPT_TEST_MAX_SAMPLES:-none}
+  Dataset cache root: ${DTGPT_DATASET_CACHE_ROOT}
+  Dataset cache mode: ${DTGPT_DATASET_CACHE_MODE}
+  Dataset cache name: ${DTGPT_DATASET_CACHE_NAME:-manifest default}
   Skip generation eval: ${DTGPT_SKIP_EVAL}
   Preserve epoch checkpoints: ${DTGPT_PRESERVE_EPOCH_CHECKPOINTS}
   Resume checkpoint: <fresh adapter; none>
   Training mode: Unsloth 4-bit DoRA adapter training
-  Node/GPU request: node-201, 1 L40S (48 GB)
+  Node/GPU request: any l40s node, 1 L40S, 48G CPU RAM
 CONFIG
 
 bash job/submit_mimic_dora.sh

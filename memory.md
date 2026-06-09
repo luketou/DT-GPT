@@ -155,3 +155,36 @@ Session conclusion:
   - **paper-style correlation-preservation R2**
 - Do not compare the paper's `R2 ~= 0.99` against local patient-level prediction R2.
 - Always check for the RR outlier patient `13793` before interpreting Respiratory Rate results.
+
+---
+
+# 2026-06-10 CPU Preprocessing Job
+
+## Submitted Job
+
+- Submitted MIMIC full-data tokenized dataset cache preprocessing job:
+  - Slurm job id: `39482`
+  - Job file: `job/submit_mimic_build_tokenized_cache_cpu.sh`
+  - Partition/account: `cpu-2g`
+  - Requested resources: `1` node, `32` CPUs, `300G` RAM, `2-00:00:00`
+  - Queue status after submit: `R` on `node-11`
+  - Slurm stdout: `logs/mimic_build_tokenized_cache_39482.out`
+  - Slurm stderr: `logs/mimic_build_tokenized_cache_39482.err`
+
+## Preprocessing Configuration
+
+- Cache mode: `--dataset-cache-mode build-only`
+- Full-data split: `DTGPT_PATIENT_SPLIT_FRACTION=1.0`
+- Sequence length: `DTGPT_SEQ_MAX_LEN=2048`
+- Decimal precision: `DTGPT_DECIMAL_PRECISION=1`
+- Cache root: `3_cache/dataset_cache`
+- Cache name: manifest-derived default unless `DTGPT_DATASET_CACHE_NAME` is set.
+- RAM control defaults:
+  - `DTGPT_DF_CONVERSION_N_JOBS=1`
+  - `DTGPT_SFT_DATASET_NUM_PROC=1`
+  - `DTGPT_DATASET_CACHE_BUILD_CHUNK_SIZE=256`
+
+## Follow-up
+
+- If the job fails from host RAM pressure, lower `DTGPT_DATASET_CACHE_BUILD_CHUNK_SIZE` first.
+- After this job writes a complete cache, the L40S paper-R2 job should run with `DTGPT_DATASET_CACHE_MODE=require` and load the existing cache instead of rebuilding dataframe/text/tokenizer preprocessing on the GPU node.

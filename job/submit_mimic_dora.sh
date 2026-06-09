@@ -32,6 +32,7 @@ export DTGPT_BIOMISTRAL_MODEL_PATH="${DTGPT_BIOMISTRAL_MODEL_PATH:-/home/r155430
 export DTGPT_TOKENIZER_MODEL_PATH="${DTGPT_TOKENIZER_MODEL_PATH:-/home/r15543056/llm_model/BioMistral-7B-DARE}"
 export DTGPT_EXPERIMENT_ROOT="${DTGPT_EXPERIMENT_ROOT:-/share/home/r15543056/trajectory_forecast/DT-GPT/3_results/raw_experiments/DT-GPT}"
 export DTGPT_RUNTIME_CACHE_ROOT="${DTGPT_RUNTIME_CACHE_ROOT:-/tmp/dtgpt_runtime_cache}"
+export DTGPT_DATASET_CACHE_ROOT="${DTGPT_DATASET_CACHE_ROOT:-${REPO_ROOT}/3_cache/dataset_cache}"
 export DTGPT_RUN_TIMESTAMP="${DTGPT_RUN_TIMESTAMP:-$(date '+%Y_%m_%d___%H_%M_%S_%6N')}"
 export DTGPT_MIMIC_DATA_ROOT="${DTGPT_MIMIC_DATA_ROOT:-/share/home/r15543056/trajectory_forecast/DT-GPT/1_experiments/2024_02_08_mimic_iv/1_data}"
 export DTGPT_MIMIC_RAW_EVENTS_DIR="${DTGPT_MIMIC_RAW_EVENTS_DIR:-${DTGPT_MIMIC_DATA_ROOT}/1_preprocessing/1_raw_events/csv}"
@@ -114,6 +115,9 @@ VALIDATION_MAX_PATIENTS="${DTGPT_VALIDATION_MAX_PATIENTS:-}"
 TEST_MAX_PATIENTS="${DTGPT_TEST_MAX_PATIENTS:-}"
 TRAIN_MAX_SAMPLES="${DTGPT_TRAIN_MAX_SAMPLES:-}"
 VALIDATION_MAX_SAMPLES="${DTGPT_VALIDATION_MAX_SAMPLES:-}"
+DATASET_CACHE_MODE="${DTGPT_DATASET_CACHE_MODE:-auto}"
+DATASET_CACHE_NAME="${DTGPT_DATASET_CACHE_NAME:-}"
+DATASET_CACHE_BUILD_CHUNK_SIZE="${DTGPT_DATASET_CACHE_BUILD_CHUNK_SIZE:-256}"
 SKIP_EVAL="${DTGPT_SKIP_EVAL:-0}"
 DEBUG_MODE="${DTGPT_DEBUG:-0}"
 PRESERVE_EPOCH_CHECKPOINTS="${DTGPT_PRESERVE_EPOCH_CHECKPOINTS:-}"
@@ -151,6 +155,7 @@ echo "Python binary: ${PYTHON_BIN}"
 echo "Conda env name: ${CONDA_ENV_NAME}"
 echo "Working directory: $(pwd)"
 echo "HF home: ${HF_HOME}"
+echo "Dataset cache root: ${DTGPT_DATASET_CACHE_ROOT}"
 echo "Sequence max length: ${SEQ_MAX_LEN}"
 echo "Run timestamp: ${DTGPT_RUN_TIMESTAMP}"
 echo "SFT dataset num proc: ${SFT_DATASET_NUM_PROC}"
@@ -166,6 +171,9 @@ echo "Validation max patients: ${VALIDATION_MAX_PATIENTS:-none}"
 echo "Test max patients: ${TEST_MAX_PATIENTS:-none}"
 echo "Train max samples: ${TRAIN_MAX_SAMPLES:-none}"
 echo "Validation max samples: ${VALIDATION_MAX_SAMPLES:-none}"
+echo "Dataset cache mode: ${DATASET_CACHE_MODE}"
+echo "Dataset cache name: ${DATASET_CACHE_NAME:-manifest default}"
+echo "Dataset cache build chunk size: ${DATASET_CACHE_BUILD_CHUNK_SIZE}"
 echo "Skip eval after training: ${SKIP_EVAL}"
 echo "Preserve epoch checkpoints: ${PRESERVE_EPOCH_CHECKPOINTS:-none}"
 echo "Debug/WandB disabled: ${DEBUG_MODE}"
@@ -258,6 +266,7 @@ for raw_config in "${SWEEP_CONFIGS[@]}"; do
     SKIP_EVAL_FLAG=()
     DEBUG_FLAG=()
     PRESERVE_EPOCH_CHECKPOINTS_FLAG=()
+    DATASET_CACHE_FLAGS=(--dataset-cache-mode "${DATASET_CACHE_MODE}" --dataset-cache-build-chunk-size "${DATASET_CACHE_BUILD_CHUNK_SIZE}")
     RUNNER=("${PYTHON_BIN}")
     if [ "${USE_DORA}" = "1" ]; then
         DORA_FLAG=(--use-dora)
@@ -295,6 +304,9 @@ for raw_config in "${SWEEP_CONFIGS[@]}"; do
     if [ -n "${PRESERVE_EPOCH_CHECKPOINTS}" ]; then
         PRESERVE_EPOCH_CHECKPOINTS_FLAG=(--preserve-epoch-checkpoints "${PRESERVE_EPOCH_CHECKPOINTS}")
     fi
+    if [ -n "${DATASET_CACHE_NAME}" ]; then
+        DATASET_CACHE_FLAGS+=(--dataset-cache-name "${DATASET_CACHE_NAME}")
+    fi
     if [ "${USE_DEEPSPEED}" = "1" ]; then
         DEEPSPEED_FLAG=(--deepspeed-config "${DEEPSPEED_CONFIG}")
     fi
@@ -329,7 +341,8 @@ for raw_config in "${SWEEP_CONFIGS[@]}"; do
         --max-new-tokens-to-generate "${MAX_NEW_TOKENS}" \
         --logging-steps "${LOGGING_STEPS}" \
         --sft-dataset-num-proc "${SFT_DATASET_NUM_PROC}" \
-        --df-conversion-n-jobs "${DF_CONVERSION_N_JOBS}"; then
+        --df-conversion-n-jobs "${DF_CONVERSION_N_JOBS}" \
+        "${DATASET_CACHE_FLAGS[@]}"; then
         print_header "Failed ${run_label}"
         exit 1
     fi

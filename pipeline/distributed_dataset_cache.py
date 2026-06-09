@@ -2,6 +2,7 @@ import time
 from pathlib import Path
 
 
+MANIFEST_FILE = "manifest.json"
 SUCCESS_MARKER = "_SUCCESS"
 TRAIN_SPLIT = "train"
 VALIDATION_SPLIT = "validation"
@@ -24,9 +25,15 @@ def dataset_cache_complete(cache_dir):
     paths = dataset_cache_paths(cache_dir)
     return (
         (cache_dir / SUCCESS_MARKER).exists()
+        and (cache_dir / MANIFEST_FILE).exists()
         and (paths[TRAIN_SPLIT] / "state.json").exists()
         and (paths[VALIDATION_SPLIT] / "state.json").exists()
     )
+
+
+def dataset_cache_temp_dir(cache_dir):
+    cache_dir = Path(cache_dir)
+    return cache_dir.with_name(cache_dir.name + ".tmp")
 
 
 def mark_dataset_cache_complete(cache_dir):
