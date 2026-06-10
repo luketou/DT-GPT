@@ -480,6 +480,12 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
             test_events_full_count,
             eval_max_samples,
         )
+        if training_full_constants:
+            constant_columns = training_full_constants[0].columns.tolist()
+        elif test_full_constants:
+            constant_columns = test_full_constants[0].columns.tolist()
+        else:
+            constant_columns = pd.read_csv(get_mimic_constants_path(), nrows=1).columns.tolist()
         del training_full_paths, validation_full_paths, test_full_paths
         del test_full_constants
         gc.collect()
@@ -558,14 +564,6 @@ class DTGPT_mimic_biomistral_fft_ti_bd_sr:
         # Setup constant column mapping {<original_colunn_name>: <descriptive_column_name>}
         constant_column_mapping = {}
 
-        # Get random constant row
-        if training_full_constants:
-            constant_row = training_full_constants[0]
-        elif test_full_constants:
-            constant_row = test_full_constants[0]
-        else:
-            constant_row = pd.read_csv(get_mimic_constants_path(), nrows=1)
-        constant_columns = constant_row.columns.tolist()
         # Get mapping for indications
         for col in constant_columns:
             match = column_mapping[column_mapping["original_column_names"] == col]
