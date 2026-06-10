@@ -188,3 +188,60 @@ Session conclusion:
 
 - If the job fails from host RAM pressure, lower `DTGPT_DATASET_CACHE_BUILD_CHUNK_SIZE` first.
 - After this job writes a complete cache, the L40S paper-R2 job should run with `DTGPT_DATASET_CACHE_MODE=require` and load the existing cache instead of rebuilding dataframe/text/tokenizer preprocessing on the GPU node.
+
+---
+
+# 2026-06-10 Paper-R2 DoRA Job Fix And Resubmission
+
+## Failure Investigated
+
+- Failed job:
+  - Slurm job id: `39769`
+  - Stdout: `logs/mimic_dora_paper_r2_39769.out`
+  - Stderr: `logs/mimic_dora_paper_r2_39769.err`
+- Fatal error:
+  - `UnboundLocalError: cannot access local variable 'test_full_constants' where it is not associated with a value`
+  - Location: `dt_gpt_fft_2024_04_11_biomistral_td_bd_sr.py`
+
+## Root Cause
+
+- The paper-R2 run uses `DTGPT_DATASET_CACHE_MODE=require`, so the script skips train/validation raw DF loading and keeps memory low.
+- The script initialized and loaded `test_full_constants`, then explicitly deleted it before conversion setup:
+  - `del test_full_constants`
+  - `gc.collect()`
+- Later conversion setup still tried to read `test_full_constants` to infer constant column names, which caused the runtime failure.
+
+## Fix Applied
+
+- Commit: `04e6c1c Prevent deleted MIMIC constants from breaking runs`
+- Fix summary:
+  - Extract `constant_columns` before deleting `test_full_constants`.
+  - Keep the existing memory release behavior.
+  - Build `constant_column_mapping` from saved lightweight metadata instead of from a deleted large object.
+- Validation:
+  - `python -m py_compile 1_experiments/2024_02_08_mimic_iv/4_dt_gpt_instruction/2024_04_11_biomistral_td_bd_summarized_row/dt_gpt_fft_2024_04_11_biomistral_td_bd_sr.py`
+  - `python -m compileall pipeline 1_experiments/2024_02_08_mimic_iv/4_dt_gpt_instruction/2024_04_11_biomistral_td_bd_summarized_row/dt_gpt_fft_2024_04_11_biomistral_td_bd_sr.py`
+
+## Resubmitted Job
+
+- Submitted fixed MIMIC paper-R2 DoRA job:
+  - Slurm job id: `39779`
+  - Job file: `job/submit_mimic_dora_r64_paper_r2_l40s.sh`
+  - Partition/account: `l40s`
+  - Requested resources: `1` node, `8` CPUs, `1` L40S GPU, `48G` RAM, `7-00:00:00`
+  - Queue status after submit: `R` on `node-201`
+  - Slurm stdout: `logs/mimic_dora_paper_r2_39779.out`
+  - Slurm stderr: `logs/mimic_dora_paper_r2_39779.err`
+
+## Runtime Notes At Resubmission
+
+- Required tokenized cache files were present before submit:
+  - `_SUCCESS`
+  - `manifest.json`
+  - `train/state.json`
+  - `validation/state.json`
+- Early log confirmed:
+  - `Dataset cache mode: require`
+  - `Dataset cache name: mimic_tokenized_seq2048_split100_dp1_a8592e561769`
+  - `Training mode: DoRA + Unsloth (4-bit QLoRA)`
+  - Job reached Unsloth initialization without immediately reproducing the previous `UnboundLocalError`.
