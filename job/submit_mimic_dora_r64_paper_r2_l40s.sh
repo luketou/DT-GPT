@@ -66,10 +66,22 @@ export DTGPT_PRESERVE_EPOCH_CHECKPOINTS="${DTGPT_PRESERVE_EPOCH_CHECKPOINTS:-1}"
 export DTGPT_TRAIN_MAX_SAMPLES="${DTGPT_TRAIN_MAX_SAMPLES:-}"
 export DTGPT_VALIDATION_MAX_SAMPLES="${DTGPT_VALIDATION_MAX_SAMPLES:-}"
 export DTGPT_TEST_MAX_SAMPLES="${DTGPT_TEST_MAX_SAMPLES:-}"
-export DTGPT_DATASET_CACHE_ROOT="${DTGPT_DATASET_CACHE_ROOT:-${REPO_ROOT}/3_cache/dataset_cache}"
-export DTGPT_DATASET_CACHE_MODE="${DTGPT_DATASET_CACHE_MODE:-require}"
-export DTGPT_DATASET_CACHE_NAME="${DTGPT_DATASET_CACHE_NAME:-}"
+REQUIRED_DATASET_CACHE_PATH="/share/home/r15543056/trajectory_forecast/DT-GPT/3_cache/dataset_cache/mimic_tokenized_seq2048_split100_dp1_a8592e561769"
+REQUIRED_DATASET_CACHE_ROOT="$(dirname "${REQUIRED_DATASET_CACHE_PATH}")"
+REQUIRED_DATASET_CACHE_NAME="$(basename "${REQUIRED_DATASET_CACHE_PATH}")"
 export DTGPT_DATASET_CACHE_BUILD_CHUNK_SIZE="${DTGPT_DATASET_CACHE_BUILD_CHUNK_SIZE:-256}"
+
+for required_cache_file in \
+    "${REQUIRED_DATASET_CACHE_PATH}/_SUCCESS" \
+    "${REQUIRED_DATASET_CACHE_PATH}/manifest.json" \
+    "${REQUIRED_DATASET_CACHE_PATH}/train/state.json" \
+    "${REQUIRED_DATASET_CACHE_PATH}/validation/state.json"; do
+    if [ ! -f "${required_cache_file}" ]; then
+        echo "Required tokenized dataset cache is incomplete: ${required_cache_file}" >&2
+        echo "Rebuild it first with job/submit_mimic_build_tokenized_cache_cpu.sh." >&2
+        exit 1
+    fi
+done
 
 if [ -n "${DTGPT_RESUME_FROM_CHECKPOINT}" ]; then
     echo "This paper-R2 fine-tune job starts a fresh adapter; unset DTGPT_RESUME_FROM_CHECKPOINT." >&2
@@ -94,9 +106,10 @@ Paper-R2 oriented r=64 DoRA fine-tune
   Train sample cap: ${DTGPT_TRAIN_MAX_SAMPLES:-none}
   Validation sample cap: ${DTGPT_VALIDATION_MAX_SAMPLES:-none}
   Test sample cap: ${DTGPT_TEST_MAX_SAMPLES:-none}
-  Dataset cache root: ${DTGPT_DATASET_CACHE_ROOT}
-  Dataset cache mode: ${DTGPT_DATASET_CACHE_MODE}
-  Dataset cache name: ${DTGPT_DATASET_CACHE_NAME:-manifest default}
+  Dataset cache path: ${REQUIRED_DATASET_CACHE_PATH}
+  Dataset cache root: ${REQUIRED_DATASET_CACHE_ROOT}
+  Dataset cache mode: require
+  Dataset cache name: ${REQUIRED_DATASET_CACHE_NAME}
   Skip generation eval: ${DTGPT_SKIP_EVAL}
   Preserve epoch checkpoints: ${DTGPT_PRESERVE_EPOCH_CHECKPOINTS}
   Resume checkpoint: <fresh adapter; none>
@@ -104,4 +117,7 @@ Paper-R2 oriented r=64 DoRA fine-tune
   Node/GPU request: any l40s node, 1 L40S, 48G CPU RAM
 CONFIG
 
+DTGPT_DATASET_CACHE_ROOT="${REQUIRED_DATASET_CACHE_ROOT}" \
+DTGPT_DATASET_CACHE_MODE="require" \
+DTGPT_DATASET_CACHE_NAME="${REQUIRED_DATASET_CACHE_NAME}" \
 bash job/submit_mimic_dora.sh
