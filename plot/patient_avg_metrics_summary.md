@@ -263,3 +263,56 @@ for i in range(len(labels)):
 
 print("paper-style correlation R2:", r2_score(true_corrs, pred_corrs))
 ```
+
+---
+
+## 6. MIMIC DoRA r64 2-Epoch Evaluation (`40007` shards)
+
+This update applies the same definitions above to the 8 shard logs:
+
+`logs/mimic_dora_paper_r2_vllm_shard_40007_*.out`
+
+The complete generated summary, CSV files, JSON metadata, and figures are stored in:
+
+`plot/64_2epoch/`
+
+Outlier rule: rows with `abs(target) > 1000.0` are excluded before metric calculation.
+
+### Paper-Style Correlation Preservation R2
+
+`R2_corr = -1.127794`
+
+| Variable Pair | Rows | True Corr. | Pred Corr. | Difference |
+|---|---:|---:|---:|---:|
+| Respiratory Rate vs SpO2 | 98,238 | -0.066436 | -0.115799 | -0.049362 |
+| Respiratory Rate vs Magnesium | 6,728 | -0.010806 | -0.007499 | +0.003307 |
+| SpO2 vs Magnesium | 6,665 | -0.039346 | -0.010265 | +0.029081 |
+
+### Step-Level sMAE
+
+| Variable | Step Rows | Step-Level sMAE |
+|---|---:|---:|
+| Respiratory Rate | 101,083 | 0.785076 |
+| SpO2 | 99,598 | 0.691073 |
+| Magnesium | 6,929 | 0.574592 |
+| **Unweighted mean across variables** | — | **0.683580** |
+| **Weighted mean by observed values** | 207,610 | **0.732954** |
+
+### Patient-Averaged Metrics
+
+| Variable | Patients | Patient R2 | Raw MAE | Patient sMAE |
+|---|---:|---:|---:|---:|
+| Respiratory Rate | 5,520 | 0.283142 | 0.466342 | 0.589344 |
+| SpO2 | 5,507 | 0.293807 | 0.444862 | 0.518177 |
+| Magnesium | 4,322 | 0.138950 | 0.508093 | 0.527532 |
+
+### Generated Outputs
+
+* `plot/64_2epoch/patient_avg_metrics_summary_64_2epoch.md`
+* `plot/64_2epoch/metrics_summary_64_2epoch.json`
+* `plot/64_2epoch/step_metrics_64_2epoch.csv`
+* `plot/64_2epoch/patient_avg_metrics_64_2epoch.csv`
+* `plot/64_2epoch/correlation_metrics_64_2epoch.csv`
+* `plot/64_2epoch/patient_avg_true_vs_pred_64_2epoch.png`
+* `plot/64_2epoch/step_scaled_mae_64_2epoch.png`
+* `plot/64_2epoch/correlation_preservation_64_2epoch.png`
