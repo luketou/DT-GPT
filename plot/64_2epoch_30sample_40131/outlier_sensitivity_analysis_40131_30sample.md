@@ -59,3 +59,48 @@ This file compares R2, R2-corr, and sMAE under several outlier-removal rules. Th
 - `outlier_sensitivity_correlation_metrics_40131_30sample.csv`
 - `outlier_sensitivity_bounds_40131_30sample.csv`
 - `outlier_sensitivity_extreme_values_40131_30sample.csv`
+
+<!-- CHINESE_SUMMARY_AND_FIGURES:START -->
+---
+
+## 中文解讀與圖表
+
+這份 outlier sensitivity analysis 的目的，是確認 paper-R2 差距是不是主要由極端值造成。結論是：**outlier 確實影響很大，但只靠移除 outlier 仍不足以重現 paper 的 `R2 ≈ 0.99`。**
+
+### 主要觀察
+
+- 不做任何過濾時：嚴格 `R2_corr = -30.636624`，scatter-style `corr^2 = 0.257812`。
+- 標準規則 `target_abs_le_1000` 後：嚴格 `R2_corr = -5.217115`，scatter-style `corr^2 = 0.924896`。
+- 嚴格 `R2_corr` 最好的規則是 `target_iqr3`，得到 `0.691803`。
+- scatter-style `corr^2` 最好的規則是 `target_abs_le_1000`，得到 `0.924896`。
+
+### Outlier 規則比較表
+
+| rule                        |   r2_corr_definition_diagonal |   r2_corr_scatter_fit_corr_squared |   step_smae_unweighted |   step_smae_weighted |   mean_patient_r2 |   mean_patient_smae |
+|:----------------------------|------------------------------:|-----------------------------------:|-----------------------:|---------------------:|------------------:|--------------------:|
+| none                        |                    -30.6366   |                           0.257812 |               0.679367 |             0.783041 |          0.13677  |            0.206793 |
+| target_abs_le_1000          |                     -5.21711  |                           0.924896 |               0.559732 |             0.608527 |          0.439173 |            0.431049 |
+| target_and_pred_abs_le_1000 |                     -5.21711  |                           0.924896 |               0.559732 |             0.608527 |          0.439173 |            0.431049 |
+| target_iqr3                 |                      0.691803 |                           0.909459 |               0.545888 |             0.59581  |          0.492479 |            0.517813 |
+| target_and_pred_iqr3        |                      0.603291 |                           0.891143 |               0.544054 |             0.594497 |          0.509241 |            0.52794  |
+| target_p0.1_99.9            |                      0.681706 |                           0.921904 |               0.549832 |             0.59944  |          0.514898 |            0.506922 |
+| target_and_pred_p0.1_99.9   |                      0.561066 |                           0.887249 |               0.549399 |             0.59899  |          0.531903 |            0.509617 |
+| target_p1_99                |                      0.66162  |                           0.92324  |               0.529568 |             0.57692  |          0.467907 |            0.532013 |
+| target_and_pred_p1_99       |                      0.407001 |                           0.874081 |               0.529326 |             0.577096 |          0.500805 |            0.538283 |
+
+### 圖表
+
+![Outlier sensitivity R2 correlation](outlier_sensitivity_r2_corr_40131_30sample.png)
+
+**圖 1.** 各種 outlier removal 規則對 `R2_corr` 的影響。紅色虛線是 paper 目標值 `0.99`。更嚴格的 IQR / percentile trimming 可以讓嚴格 `R2_corr` 變正，但仍到不了 0.99。
+
+![Outlier sensitivity sMAE and patient metrics](outlier_sensitivity_smae_patient_40131_30sample.png)
+
+**圖 2.** 各種 outlier removal 規則對 step-level sMAE、patient R2、patient sMAE 的影響。整體來看，去除極端值會降低 sMAE，並改善 patient-level 指標。
+
+### 白話結論
+
+- **Outlier 是問題的一部分**：完全不過濾時，嚴格 `R2_corr` 非常差。
+- **標準 outlier rule 足以讓 sMAE 接近 paper 區間**，但不足以讓嚴格 `R2_corr` 接近 0.99。
+- **如果 paper 使用的是 scatter fit / correlation-squared 類型指標**，目前最接近的值約 `0.924896`；但若使用 `plot/r2_metric_definitions.md` 的嚴格公式，最高也只有 `0.691803`。
+<!-- CHINESE_SUMMARY_AND_FIGURES:END -->
