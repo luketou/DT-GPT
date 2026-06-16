@@ -1,0 +1,147 @@
+{
+  "job_id": "40131",
+  "log_glob": "logs/mimic_dora_paper_r2_vllm_shard_40131_*.out",
+  "num_shards": 8,
+  "num_samples_to_generate": 30,
+  "target_rows": 102569,
+  "prediction_rows": 102569,
+  "outlier_abs_target_limit": 1000.0,
+  "r2_corr_definition_diagonal": -5.217115432514217,
+  "r2_corr_scatter_fit_corr_squared": 0.9248958387311518,
+  "corr_vector_corr": 0.9617150506938902,
+  "step_metrics": [
+    {
+      "variable_code": "220210",
+      "variable": "Respiratory Rate",
+      "rows": 101083,
+      "r2_step": 0.10377542069010715,
+      "mae_scaled": 0.6476481912180977,
+      "smae": 0.6476481912180977,
+      "rmse": 1.7122005511885043
+    },
+    {
+      "variable_code": "220277",
+      "variable": "SpO2",
+      "rows": 99598,
+      "r2_step": 0.286384399877626,
+      "mae_scaled": 0.5797254486085455,
+      "smae": 0.5797254486085455,
+      "rmse": 0.83940872224691
+    },
+    {
+      "variable_code": "220635",
+      "variable": "Magnesium",
+      "rows": 6929,
+      "r2_step": 0.38128860869806214,
+      "mae_scaled": 0.4518213903503505,
+      "smae": 0.4518213903503505,
+      "rmse": 0.7854795559536517
+    },
+    {
+      "variable_code": "mean_unweighted",
+      "variable": "Unweighted mean",
+      "rows": 207610,
+      "r2_step": NaN,
+      "mae_scaled": 0.5597316767256646,
+      "smae": 0.5597316767256646,
+      "rmse": NaN
+    },
+    {
+      "variable_code": "mean_weighted",
+      "variable": "Weighted mean",
+      "rows": 207610,
+      "r2_step": NaN,
+      "mae_scaled": 0.6085274686053199,
+      "smae": 0.6085274686053199,
+      "rmse": NaN
+    }
+  ],
+  "patient_avg_metrics": [
+    {
+      "variable_code": "220210",
+      "variable": "Respiratory Rate",
+      "patients": 5520,
+      "r2_patient": 0.5100574109042961,
+      "raw_mae": 0.3687192544529984,
+      "true_patient_avg_std": 0.7912899514810184,
+      "smae": 0.4659723705108156
+    },
+    {
+      "variable_code": "220277",
+      "variable": "SpO2",
+      "patients": 5507,
+      "r2_patient": 0.47734058459581086,
+      "raw_mae": 0.35743316794649077,
+      "true_patient_avg_std": 0.8585137488247487,
+      "smae": 0.4163394802189182
+    },
+    {
+      "variable_code": "220635",
+      "variable": "Magnesium",
+      "patients": 4322,
+      "r2_patient": 0.33012014025155667,
+      "raw_mae": 0.3956963629943293,
+      "true_patient_avg_std": 0.9631510925118841,
+      "smae": 0.41083519093806864
+    }
+  ],
+  "correlation_metrics": [
+    {
+      "pair": "Respiratory Rate vs SpO2",
+      "left_code": "220210",
+      "right_code": "220277",
+      "rows": 98238,
+      "true_corr": -0.06643641915494926,
+      "pred_corr": -0.15789165404431632,
+      "diff": -0.09145523488936706
+    },
+    {
+      "pair": "Respiratory Rate vs Magnesium",
+      "left_code": "220210",
+      "right_code": "220635",
+      "rows": 6728,
+      "true_corr": -0.010805728564272253,
+      "pred_corr": 0.022071585128282688,
+      "diff": 0.03287731369255494
+    },
+    {
+      "pair": "SpO2 vs Magnesium",
+      "left_code": "220277",
+      "right_code": "220635",
+      "rows": 6665,
+      "true_corr": -0.03934634877517134,
+      "pred_corr": -0.026023989189266742,
+      "diff": 0.013322359585904598
+    }
+  ],
+  "logs": [
+    "logs/mimic_dora_paper_r2_vllm_shard_40131_0.out",
+    "logs/mimic_dora_paper_r2_vllm_shard_40131_1.out",
+    "logs/mimic_dora_paper_r2_vllm_shard_40131_2.out",
+    "logs/mimic_dora_paper_r2_vllm_shard_40131_3.out",
+    "logs/mimic_dora_paper_r2_vllm_shard_40131_4.out",
+    "logs/mimic_dora_paper_r2_vllm_shard_40131_5.out",
+    "logs/mimic_dora_paper_r2_vllm_shard_40131_6.out",
+    "logs/mimic_dora_paper_r2_vllm_shard_40131_7.out"
+  ],
+  "target_dataframes": [
+    "/share/home/r15543056/trajectory_forecast/DT-GPT/3_results/raw_experiments/DT-GPT/setup/setup/2026_06_15___17_03_32_245776/eval_meta_data/TEST_shard_000_of_008_target_dataframe.csv",
+    "/share/home/r15543056/trajectory_forecast/DT-GPT/3_results/raw_experiments/DT-GPT/setup/setup/2026_06_15___17_03_32_246436/eval_meta_data/TEST_shard_001_of_008_target_dataframe.csv",
+    "/share/home/r15543056/trajectory_forecast/DT-GPT/3_results/raw_experiments/DT-GPT/setup/setup/2026_06_15___20_12_45_643170/eval_meta_data/TEST_shard_002_of_008_target_dataframe.csv",
+    "/share/home/r15543056/trajectory_forecast/DT-GPT/3_results/raw_experiments/DT-GPT/setup/setup/2026_06_15___20_13_48_939512/eval_meta_data/TEST_shard_003_of_008_target_dataframe.csv",
+    "/share/home/r15543056/trajectory_forecast/DT-GPT/3_results/raw_experiments/DT-GPT/setup/setup/2026_06_15___23_19_46_120359/eval_meta_data/TEST_shard_004_of_008_target_dataframe.csv",
+    "/share/home/r15543056/trajectory_forecast/DT-GPT/3_results/raw_experiments/DT-GPT/setup/setup/2026_06_15___23_19_46_167801/eval_meta_data/TEST_shard_005_of_008_target_dataframe.csv",
+    "/share/home/r15543056/trajectory_forecast/DT-GPT/3_results/raw_experiments/DT-GPT/setup/setup/2026_06_16___02_21_55_521520/eval_meta_data/TEST_shard_006_of_008_target_dataframe.csv",
+    "/share/home/r15543056/trajectory_forecast/DT-GPT/3_results/raw_experiments/DT-GPT/setup/setup/2026_06_16___02_24_46_235694/eval_meta_data/TEST_shard_007_of_008_target_dataframe.csv"
+  ],
+  "prediction_dataframes": [
+    "/share/home/r15543056/trajectory_forecast/DT-GPT/3_results/raw_experiments/DT-GPT/setup/setup/2026_06_15___17_03_32_245776/eval_meta_data/TEST_shard_000_of_008_prediction_dataframe.csv",
+    "/share/home/r15543056/trajectory_forecast/DT-GPT/3_results/raw_experiments/DT-GPT/setup/setup/2026_06_15___17_03_32_246436/eval_meta_data/TEST_shard_001_of_008_prediction_dataframe.csv",
+    "/share/home/r15543056/trajectory_forecast/DT-GPT/3_results/raw_experiments/DT-GPT/setup/setup/2026_06_15___20_12_45_643170/eval_meta_data/TEST_shard_002_of_008_prediction_dataframe.csv",
+    "/share/home/r15543056/trajectory_forecast/DT-GPT/3_results/raw_experiments/DT-GPT/setup/setup/2026_06_15___20_13_48_939512/eval_meta_data/TEST_shard_003_of_008_prediction_dataframe.csv",
+    "/share/home/r15543056/trajectory_forecast/DT-GPT/3_results/raw_experiments/DT-GPT/setup/setup/2026_06_15___23_19_46_120359/eval_meta_data/TEST_shard_004_of_008_prediction_dataframe.csv",
+    "/share/home/r15543056/trajectory_forecast/DT-GPT/3_results/raw_experiments/DT-GPT/setup/setup/2026_06_15___23_19_46_167801/eval_meta_data/TEST_shard_005_of_008_prediction_dataframe.csv",
+    "/share/home/r15543056/trajectory_forecast/DT-GPT/3_results/raw_experiments/DT-GPT/setup/setup/2026_06_16___02_21_55_521520/eval_meta_data/TEST_shard_006_of_008_prediction_dataframe.csv",
+    "/share/home/r15543056/trajectory_forecast/DT-GPT/3_results/raw_experiments/DT-GPT/setup/setup/2026_06_16___02_24_46_235694/eval_meta_data/TEST_shard_007_of_008_prediction_dataframe.csv"
+  ]
+}
