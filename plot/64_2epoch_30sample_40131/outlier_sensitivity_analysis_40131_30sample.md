@@ -104,3 +104,51 @@ This file compares R2, R2-corr, and sMAE under several outlier-removal rules. Th
 - **標準 outlier rule 足以讓 sMAE 接近 paper 區間**，但不足以讓嚴格 `R2_corr` 接近 0.99。
 - **如果 paper 使用的是 scatter fit / correlation-squared 類型指標**，目前最接近的值約 `0.924896`；但若使用 `plot/r2_metric_definitions.md` 的嚴格公式，最高也只有 `0.691803`。
 <!-- CHINESE_SUMMARY_AND_FIGURES:END -->
+
+<!-- DELETED_ROW_VISUALIZATION:START -->
+---
+
+## Deleted-Row Visualization
+
+These plots separate three different concepts that were previously easy to confuse:
+
+- `missing / invalid before rule`: rows that did not have both target and prediction, so they were not evaluated by that variable.
+- `removed by outlier rule`: rows that had both target and prediction but failed the outlier rule.
+- `kept valid rows`: rows used for metric calculation.
+
+### Key table: standard rules
+
+| rule                 | variable         |   valid_rows_before_outlier_rule |   kept_rows |   removed_by_outlier_rule |   removed_pct_of_valid |
+|:---------------------|:-----------------|---------------------------------:|------------:|--------------------------:|-----------------------:|
+| target_abs_le_1000   | Respiratory Rate |                           101084 |      101083 |                         1 |                  0.001 |
+| target_abs_le_1000   | SpO2             |                            99599 |       99598 |                         1 |                  0.001 |
+| target_abs_le_1000   | Magnesium        |                             6929 |        6929 |                         0 |                  0     |
+| target_iqr3          | Respiratory Rate |                           101084 |      100970 |                       114 |                  0.113 |
+| target_iqr3          | SpO2             |                            99599 |       99307 |                       292 |                  0.293 |
+| target_iqr3          | Magnesium        |                             6929 |        6890 |                        39 |                  0.563 |
+| target_and_pred_iqr3 | Respiratory Rate |                           101084 |      100433 |                       651 |                  0.644 |
+| target_and_pred_iqr3 | SpO2             |                            99599 |       99195 |                       404 |                  0.406 |
+| target_and_pred_iqr3 | Magnesium        |                             6929 |        6783 |                       146 |                  2.107 |
+
+### Figures
+
+![Deletion accounting](outlier_removal_accounting_40131_30sample.png)
+
+**Figure A.** Full accounting for each variable and rule. Gray means missing/invalid before any outlier rule. Orange is the actual rule deletion. This shows Magnesium has many missing rows, not many IQR-deleted rows.
+
+![Actual removed counts](outlier_removed_counts_only_40131_30sample.png)
+
+**Figure B.** Actual outlier-rule deletion counts only, after excluding missing rows. This is the cleanest plot for answering which method deletes how much valid data.
+
+![Target thresholds](outlier_target_distribution_thresholds_40131_30sample.png)
+
+**Figure C.** Target value distributions and target-based cutoff lines. This shows where IQR3 and percentile rules draw their boundaries on the standardized scale.
+
+Generated files:
+
+- `outlier_removal_accounting_40131_30sample.png`
+- `outlier_removed_counts_only_40131_30sample.png`
+- `outlier_target_distribution_thresholds_40131_30sample.png`
+- `outlier_removal_accounting_40131_30sample.csv`
+- `outlier_removed_data_examples_40131_30sample.csv`
+<!-- DELETED_ROW_VISUALIZATION:END -->
