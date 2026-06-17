@@ -132,15 +132,15 @@ These plots separate three different concepts that were previously easy to confu
 
 ### Figures
 
-![Deletion accounting](outlier_removal_accounting_40131_30sample.png)
+![Deletion accounting](outlier_analysis/outlier_removal_accounting_40131_30sample.png)
 
 **Figure A.** Full accounting for each variable and rule. Gray means missing/invalid before any outlier rule. Orange is the actual rule deletion. This shows Magnesium has many missing rows, not many IQR-deleted rows.
 
-![Actual removed counts](outlier_removed_counts_only_40131_30sample.png)
+![Actual removed counts](outlier_analysis/outlier_removed_counts_only_40131_30sample.png)
 
 **Figure B.** Actual outlier-rule deletion counts only, after excluding missing rows. This is the cleanest plot for answering which method deletes how much valid data.
 
-![Target thresholds](outlier_target_distribution_thresholds_40131_30sample.png)
+![Target thresholds](outlier_analysis/outlier_target_distribution_thresholds_40131_30sample.png)
 
 **Figure C.** Target value distributions and target-based cutoff lines. This shows where IQR3 and percentile rules draw their boundaries on the standardized scale.
 
