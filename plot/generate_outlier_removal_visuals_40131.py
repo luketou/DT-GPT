@@ -16,12 +16,27 @@ LOG_DIR = ROOT / "logs"
 LOG_GLOB = "mimic_dora_paper_r2_vllm_shard_40131_*.out"
 OUT_DIR = ROOT / "plot" / "64_2epoch_30sample_40131"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
+ANALYSIS_DIR = OUT_DIR / "outlier_analysis"
+ANALYSIS_DIR.mkdir(parents=True, exist_ok=True)
 
 matplotlib_cache_dir = Path(os.environ.get("TMPDIR", "/tmp")) / "dtgpt_matplotlib"
 matplotlib_cache_dir.mkdir(parents=True, exist_ok=True)
 os.environ.setdefault("MPLCONFIGDIR", str(matplotlib_cache_dir))
 
 import matplotlib.pyplot as plt
+
+
+plt.rcParams.update(
+    {
+        "font.family": "sans-serif",
+        "font.sans-serif": ["Arial", "Helvetica", "DejaVu Sans", "sans-serif"],
+        "svg.fonttype": "none",
+        "pdf.fonttype": 42,
+        "axes.spines.right": False,
+        "axes.spines.top": False,
+        "axes.linewidth": 0.8,
+    }
+)
 
 
 VARIABLES = {
@@ -251,7 +266,7 @@ def plot_accounting(accounting: pd.DataFrame) -> Path:
     axes[-1].set_xticks(x)
     axes[-1].set_xticklabels(labels, fontsize=8)
     fig.suptitle("Deletion accounting: kept vs outlier-removed vs missing rows", fontsize=15)
-    path = OUT_DIR / "outlier_removal_accounting_40131_30sample.png"
+    path = ANALYSIS_DIR / "outlier_removal_accounting_40131_30sample.png"
     fig.savefig(path, dpi=180)
     plt.close(fig)
     return path
@@ -272,10 +287,31 @@ def plot_removed_counts(accounting: pd.DataFrame) -> Path:
     ax.set_ylabel("Rows removed among valid rows")
     ax.set_title("Actual outlier-rule removals only (missing rows excluded)")
     ax.legend()
-    path = OUT_DIR / "outlier_removed_counts_only_40131_30sample.png"
+    path = ANALYSIS_DIR / "outlier_removed_counts_only_40131_30sample.png"
     fig.savefig(path, dpi=180)
     plt.close(fig)
     return path
+
+
+def draw_cutoff_line(
+    ax,
+    value: float,
+    low_clip: float,
+    high_clip: float,
+    color: str,
+    style: str,
+    label: str,
+    offscreen_slot: int,
+) -> None:
+    """Draw visible cutoff lines; pin off-view cutoffs to the display edge."""
+    if low_clip <= value <= high_clip:
+        ax.axvline(value, color=color, linestyle=style, linewidth=1.4, label=label)
+        return
+
+    span = high_clip - low_clip
+    inset = span * 0.006 * offscreen_slot
+    edge = low_clip + inset if value < low_clip else high_clip - inset
+    ax.axvline(edge, color=color, linestyle=style, linewidth=1.4, alpha=0.8, label=label)
 
 
 def plot_target_distributions(target: pd.DataFrame, pred: pd.DataFrame, bounds_df: pd.DataFrame) -> Path:
@@ -295,18 +331,18 @@ def plot_target_distributions(target: pd.DataFrame, pred: pd.DataFrame, bounds_d
         ax.set_title(f"{variable}: target distribution among valid rows")
         ax.set_ylabel("Rows")
         ax.set_xlabel("Target value (standardized scale, clipped for display)")
-        for bound_name, (color, style, label) in line_styles.items():
+        for offscreen_slot, (bound_name, (color, style, label)) in enumerate(line_styles.items()):
             row = bounds_df[(bounds_df["variable_code"] == code) & (bounds_df["bound"] == bound_name)].iloc[0]
             for value in [row["low"], row["high"]]:
-                if low_clip <= value <= high_clip:
-                    ax.axvline(value, color=color, linestyle=style, linewidth=1.4, label=label)
+                draw_cutoff_line(ax, value, low_clip, high_clip, color, style, label, offscreen_slot)
         handles, labels = ax.get_legend_handles_labels()
         unique = dict(zip(labels, handles))
         ax.legend(unique.values(), unique.keys(), fontsize=8)
         outside = int(((valid_values < low_clip) | (valid_values > high_clip)).sum())
         ax.text(0.99, 0.92, f"display clipped: {outside} rows outside", transform=ax.transAxes, ha="right", va="top", fontsize=8)
+        ax.text(0.99, 0.85, "edge lines mark off-view cutoffs", transform=ax.transAxes, ha="right", va="top", fontsize=7, color="#4D4D4D")
     fig.suptitle("Where target-based rules place their cutoffs", fontsize=15)
-    path = OUT_DIR / "outlier_target_distribution_thresholds_40131_30sample.png"
+    path = ANALYSIS_DIR / "outlier_target_distribution_thresholds_40131_30sample.png"
     fig.savefig(path, dpi=180)
     plt.close(fig)
     return path
@@ -341,15 +377,15 @@ These plots separate three different concepts that were previously easy to confu
 
 ### Figures
 
-![Deletion accounting](outlier_removal_accounting_40131_30sample.png)
+![Deletion accounting](outlier_analysis/outlier_removal_accounting_40131_30sample.png)
 
 **Figure A.** Full accounting for each variable and rule. Gray means missing/invalid before any outlier rule. Orange is the actual rule deletion. This shows Magnesium has many missing rows, not many IQR-deleted rows.
 
-![Actual removed counts](outlier_removed_counts_only_40131_30sample.png)
+![Actual removed counts](outlier_analysis/outlier_removed_counts_only_40131_30sample.png)
 
 **Figure B.** Actual outlier-rule deletion counts only, after excluding missing rows. This is the cleanest plot for answering which method deletes how much valid data.
 
-![Target thresholds](outlier_target_distribution_thresholds_40131_30sample.png)
+![Target thresholds](outlier_analysis/outlier_target_distribution_thresholds_40131_30sample.png)
 
 **Figure C.** Target value distributions and target-based cutoff lines. This shows where IQR3 and percentile rules draw their boundaries on the standardized scale.
 
