@@ -1,3 +1,75 @@
+<!-- TARGET_TWO_STEP_FILTER:START -->
+# Target-only two-step outlier filtering
+
+這是目前主檢查要看的 target-based 規則，不使用 prediction value 來決定 outlier boundary。
+
+流程：
+
+- Step 1: 對 target values 計算 mean ± 3 SD，先移除超過這個範圍的 target rows。
+- Step 2: 在 Step 1 保留下來的 target values 上重新計算 mean 和 SD。
+- Step 3: 對 Step 1 保留下來但超過重新計算後 mean ± 3 SD 的 target values 做 clipping；這一步不刪 row。
+
+| variable | valid rows | removed in step 1 | removed % | clipped in step 2 | clipped % among kept |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Respiratory Rate | 101,084 | 2 | 0.002 | 730 | 0.722 |
+| SpO2 | 99,599 | 1 | 0.001 | 843 | 0.846 |
+| Magnesium | 6,929 | 54 | 0.779 | 70 | 1.018 |
+
+![Target-only two-step filter](outlier_target_two_step_filter_40131_30sample.png)
+
+## 重新計算後的 step-level sMAE
+
+這裡的 metric 使用同一套 target-only two-step 規則：
+
+1. 先用 target values 計算 initial mean ± 3 SD，移除超出範圍的 target rows。
+2. 在保留下來的 target values 上重新計算 mean 和 SD。
+3. 對保留下來但超出 recomputed mean ± 3 SD 的 target values 做 clipping。
+4. prediction value 只用於計算 error，不參與 outlier boundary。
+
+| variable | rows used | removed step 1 | clipped step 2 | sMAE, standardized scale | sMAE / recomputed SD |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Respiratory Rate | 101,082 | 2 | 730 | 0.636713 | 0.604971 |
+| SpO2 | 99,598 | 1 | 843 | 0.569190 | 0.572814 |
+| Magnesium | 6,875 | 54 | 70 | 0.431016 | 0.565611 |
+
+整體結果：
+
+- Unweighted mean sMAE, standardized scale: **0.545639**
+- Weighted mean sMAE, standardized scale: **0.597497**
+- Unweighted mean sMAE divided by recomputed SD: **0.581132**
+- Weighted mean sMAE divided by recomputed SD: **0.588236**
+
+## DT-GPT 論文式 correlation preservation R2
+
+依照 `plot/r2_metric_definitions.md`，DT-GPT 論文式 `R2_corr` 是比較 true pairwise correlation vector 和 predicted pairwise correlation vector：
+
+```text
+R2_corr = 1 - sum((c_true - c_pred)^2) / sum((c_true - mean(c_true))^2)
+```
+
+這不是 scatter-style `corr(c_true, c_pred)^2`。在這份 3-variable MIMIC 結果中，pairwise correlation 只有 3 個點，所以 strict `R2_corr` 對單一 pair 的偏差非常敏感。
+
+| pair | rows | true corr | pred corr | diff |
+| --- | ---: | ---: | ---: | ---: |
+| Respiratory Rate vs SpO2 | 98,237 | -0.129728 | -0.157883 | -0.028155 |
+| Respiratory Rate vs Magnesium | 6,675 | -0.005193 | 0.030751 | 0.035944 |
+| SpO2 vs Magnesium | 6,612 | -0.020572 | -0.035905 | -0.015333 |
+
+結果：
+
+- Strict DT-GPT paper-style `R2_corr`: **0.748408**
+- 參考用 scatter-style `corr(true_corr, pred_corr)^2`: **0.942399**
+
+## 數據現象解釋
+
+- Respiratory Rate 的第一步 SD 被兩個巨大 target outliers 拉大；移除後重新計算 SD，才會有 730 筆進入 clipping。
+- SpO2 第一階段只移除 1 筆，但重算 SD 後有 843 筆被 clipping。
+- Magnesium 第一階段移除 54 筆，第二階段 clipping 70 筆；Magnesium 少很多 row 的主要原因仍然是原本 valid target/prediction pair 少，不是 prediction-based deletion。
+- sMAE 在 standardized scale 上，Magnesium 最低，Respiratory Rate 最高；但除以 recomputed SD 後三個變數更接近，代表 Magnesium 的 recomputed target SD 明顯比較小，會把 normalized error 放大。
+- Target clipping 後的 true correlation 結構改變很明顯，尤其 Respiratory Rate vs SpO2 的 true correlation 從接近 0 變成更負。prediction correlation 方向一致但幅度仍有偏差，所以 strict `R2_corr` 提升到 0.748408，但沒有達到 paper-like 0.99。
+- scatter-style `corr^2 = 0.942399` 比 strict `R2_corr` 高，是因為它只看三個 pair 的線性排列趨勢；strict `R2_corr` 會直接懲罰每個 pair 的絕對偏差，因此比較嚴格。
+<!-- TARGET_TWO_STEP_FILTER:END -->
+
 # Outlier 刪除方法圖表總覽
 
 本檔案整理 job `40131` 的 outlier deletion analysis。這裡最重要的是把三種情況分開：

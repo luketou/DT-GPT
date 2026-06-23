@@ -18,6 +18,7 @@ OUT_DIR = ROOT / "plot" / "64_2epoch_30sample_40131"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 ANALYSIS_DIR = OUT_DIR / "outlier_analysis"
 ANALYSIS_DIR.mkdir(parents=True, exist_ok=True)
+NATURE_STYLE = ROOT / ".agents" / "skills" / "scientific-visualization" / "assets" / "nature.mplstyle"
 
 matplotlib_cache_dir = Path(os.environ.get("TMPDIR", "/tmp")) / "dtgpt_matplotlib"
 matplotlib_cache_dir.mkdir(parents=True, exist_ok=True)
@@ -25,6 +26,9 @@ os.environ.setdefault("MPLCONFIGDIR", str(matplotlib_cache_dir))
 
 import matplotlib.pyplot as plt
 
+
+if NATURE_STYLE.exists():
+    plt.style.use(str(NATURE_STYLE))
 
 plt.rcParams.update(
     {
@@ -47,6 +51,7 @@ VARIABLES = {
 
 RULE_ORDER = [
     "target_abs_le_1000",
+    "target_3sd_clip_after_3sd_removal",
     "target_and_pred_abs_le_1000",
     "target_iqr3",
     "target_and_pred_iqr3",
@@ -58,6 +63,7 @@ RULE_ORDER = [
 
 RULE_LABELS = {
     "target_abs_le_1000": "target\nabs<=1000",
+    "target_3sd_clip_after_3sd_removal": "target\n3SD+clip",
     "target_and_pred_abs_le_1000": "target+pred\nabs<=1000",
     "target_iqr3": "target\nIQR3",
     "target_and_pred_iqr3": "target+pred\nIQR3",
@@ -122,19 +128,36 @@ def percentile_bounds(series: pd.Series, low: float, high: float) -> tuple[float
     return tuple(float(v) for v in np.percentile(values, [low, high]))
 
 
+def mean_sd_bounds(series: pd.Series, k: float = 3.0) -> tuple[float, float, float, float]:
+    values = pd.to_numeric(series, errors="coerce").dropna().astype(float)
+    mean = float(values.mean())
+    sd = float(values.std(ddof=1))
+    return mean, sd, mean - k * sd, mean + k * sd
+
+
 def between(series: pd.Series, bounds: tuple[float, float]) -> pd.Series:
     low, high = bounds
     return series.between(low, high)
 
 
-def build_rule_masks(target: pd.DataFrame, pred: pd.DataFrame) -> tuple[dict[str, dict[str, pd.Series]], list[dict[str, object]]]:
+def build_rule_masks(
+    target: pd.DataFrame,
+    pred: pd.DataFrame,
+) -> tuple[dict[str, dict[str, pd.Series]], list[dict[str, object]], pd.DataFrame]:
     masks: dict[str, dict[str, pd.Series]] = {rule: {} for rule in RULE_ORDER}
     bound_rows: list[dict[str, object]] = []
+    two_step_rows: list[dict[str, object]] = []
     for code, variable in VARIABLES.items():
         y_true = numeric(target, code)
         y_pred = numeric(pred, code)
         valid = y_true.notna() & y_pred.notna()
+        target_available = y_true.notna()
 
+        first_mean, first_sd, first_low, first_high = mean_sd_bounds(y_true[target_available])
+        stage1_target_inlier = target_available & y_true.between(first_low, first_high)
+        second_mean, second_sd, clip_low, clip_high = mean_sd_bounds(y_true[stage1_target_inlier])
+        stage1_valid_inlier = valid & y_true.between(first_low, first_high)
+        clipped_valid = stage1_valid_inlier & ~y_true.between(clip_low, clip_high)
         target_iqr3 = iqr_bounds(y_true)
         pred_iqr3 = iqr_bounds(y_pred)
         target_p001 = percentile_bounds(y_true, 0.1, 99.9)
@@ -143,6 +166,8 @@ def build_rule_masks(target: pd.DataFrame, pred: pd.DataFrame) -> tuple[dict[str
         pred_p1 = percentile_bounds(y_pred, 1.0, 99.0)
 
         for name, bounds in [
+            ("target_3sd_initial_remove", (first_low, first_high)),
+            ("target_3sd_recomputed_clip", (clip_low, clip_high)),
             ("target_iqr3", target_iqr3),
             ("pred_iqr3", pred_iqr3),
             ("target_p0.1_99.9", target_p001),
@@ -160,7 +185,31 @@ def build_rule_masks(target: pd.DataFrame, pred: pd.DataFrame) -> tuple[dict[str
                 }
             )
 
+        two_step_rows.append(
+            {
+                "variable_code": code,
+                "variable": variable,
+                "target_rows_available": int(target_available.sum()),
+                "valid_rows_before_outlier_rule": int(valid.sum()),
+                "first_pass_mean": first_mean,
+                "first_pass_sd": first_sd,
+                "first_pass_low": first_low,
+                "first_pass_high": first_high,
+                "removed_stage1_target_rows": int((target_available & ~stage1_target_inlier).sum()),
+                "removed_stage1_valid_pairs": int((valid & ~stage1_valid_inlier).sum()),
+                "second_pass_mean_after_stage1": second_mean,
+                "second_pass_sd_after_stage1": second_sd,
+                "clip_low": clip_low,
+                "clip_high": clip_high,
+                "kept_valid_pairs_after_stage1": int(stage1_valid_inlier.sum()),
+                "clipped_valid_pairs_after_stage1": int(clipped_valid.sum()),
+                "removed_stage1_pct_of_valid": 100.0 * (valid & ~stage1_valid_inlier).sum() / valid.sum() if valid.sum() else np.nan,
+                "clipped_pct_of_stage1_kept": 100.0 * clipped_valid.sum() / stage1_valid_inlier.sum() if stage1_valid_inlier.sum() else np.nan,
+            }
+        )
+
         masks["target_abs_le_1000"][code] = valid & (y_true.abs() <= 1000)
+        masks["target_3sd_clip_after_3sd_removal"][code] = stage1_valid_inlier
         masks["target_and_pred_abs_le_1000"][code] = valid & (y_true.abs() <= 1000) & (y_pred.abs() <= 1000)
         masks["target_iqr3"][code] = valid & between(y_true, target_iqr3)
         masks["target_and_pred_iqr3"][code] = valid & between(y_true, target_iqr3) & between(y_pred, pred_iqr3)
@@ -168,7 +217,7 @@ def build_rule_masks(target: pd.DataFrame, pred: pd.DataFrame) -> tuple[dict[str
         masks["target_and_pred_p0.1_99.9"][code] = valid & between(y_true, target_p001) & between(y_pred, pred_p001)
         masks["target_p1_99"][code] = valid & between(y_true, target_p1)
         masks["target_and_pred_p1_99"][code] = valid & between(y_true, target_p1) & between(y_pred, pred_p1)
-    return masks, bound_rows
+    return masks, bound_rows, pd.DataFrame(two_step_rows)
 
 
 def build_accounting(target: pd.DataFrame, pred: pd.DataFrame, masks: dict[str, dict[str, pd.Series]]) -> pd.DataFrame:
@@ -234,6 +283,40 @@ def build_removed_examples(
             frame["abs_prediction"] = frame["prediction"].abs()
             frame["abs_error"] = (frame["target"] - frame["prediction"]).abs()
             frame = frame.sort_values(["abs_target", "abs_error"], ascending=False).head(max_rows_per_group)
+            rows.extend(frame.to_dict(orient="records"))
+    return pd.DataFrame(rows)
+
+
+def build_two_step_examples(target: pd.DataFrame, pred: pd.DataFrame, two_step: pd.DataFrame, max_rows_per_group: int = 30) -> pd.DataFrame:
+    rows = []
+    for code, variable in VARIABLES.items():
+        y_true = numeric(target, code)
+        y_pred = numeric(pred, code)
+        valid = y_true.notna() & y_pred.notna()
+        rule = two_step[two_step["variable_code"] == code].iloc[0]
+        stage1_removed = valid & ~y_true.between(rule["first_pass_low"], rule["first_pass_high"])
+        stage1_kept = valid & y_true.between(rule["first_pass_low"], rule["first_pass_high"])
+        clipped = stage1_kept & ~y_true.between(rule["clip_low"], rule["clip_high"])
+        for action, mask in [("removed_stage1_3sd", stage1_removed), ("clipped_stage2_recomputed_3sd", clipped)]:
+            frame = pd.DataFrame(
+                {
+                    "action": action,
+                    "variable_code": code,
+                    "variable": variable,
+                    "patientid": target.loc[mask, "patientid"].astype(str),
+                    "date": target.loc[mask, "date"].astype(str),
+                    "source_shard": target.loc[mask, "source_shard"].astype(int),
+                    "source_row": target.loc[mask, "source_row"].astype(int),
+                    "target_original": y_true[mask].astype(float),
+                    "target_after_clip": y_true[mask].clip(rule["clip_low"], rule["clip_high"]).astype(float),
+                    "prediction": y_pred[mask].astype(float),
+                }
+            )
+            if frame.empty:
+                continue
+            frame["abs_target_original"] = frame["target_original"].abs()
+            frame["abs_clip_delta"] = (frame["target_original"] - frame["target_after_clip"]).abs()
+            frame = frame.sort_values(["abs_target_original", "abs_clip_delta"], ascending=False).head(max_rows_per_group)
             rows.extend(frame.to_dict(orient="records"))
     return pd.DataFrame(rows)
 
@@ -348,17 +431,126 @@ def plot_target_distributions(target: pd.DataFrame, pred: pd.DataFrame, bounds_d
     return path
 
 
+def plot_two_step_filter(target: pd.DataFrame, pred: pd.DataFrame, two_step: pd.DataFrame) -> Path:
+    fig, axes = plt.subplots(1, 3, figsize=(7.2, 2.6), constrained_layout=True)
+    for panel_label, ax, (code, variable) in zip(["a", "b", "c"], axes, VARIABLES.items()):
+        y_true = numeric(target, code)
+        y_pred = numeric(pred, code)
+        valid_values = y_true[y_true.notna() & y_pred.notna()].astype(float)
+        rule = two_step[two_step["variable_code"] == code].iloc[0]
+        low_display, high_display = np.percentile(valid_values, [0.2, 99.8])
+        displayed = valid_values.clip(low_display, high_display)
+        ax.hist(displayed, bins=60, color="#56B4E9", alpha=0.85, linewidth=0)
+        for value, color, style, label in [
+            (rule["first_pass_low"], "#D55E00", "--", "initial 3SD removal"),
+            (rule["first_pass_high"], "#D55E00", "--", "initial 3SD removal"),
+            (rule["clip_low"], "#0072B2", "-", "recomputed 3SD clip"),
+            (rule["clip_high"], "#0072B2", "-", "recomputed 3SD clip"),
+        ]:
+            draw_cutoff_line(ax, float(value), low_display, high_display, color, style, label, 1)
+        ax.set_title(variable)
+        ax.set_xlabel("Standardized target")
+        if ax is axes[0]:
+            ax.set_ylabel("Rows")
+        ax.text(-0.18, 1.08, panel_label, transform=ax.transAxes, fontsize=9, fontweight="bold", va="top")
+        annotation = (
+            f"valid n={int(rule['valid_rows_before_outlier_rule']):,}\n"
+            f"removed={int(rule['removed_stage1_valid_pairs']):,}\n"
+            f"clipped={int(rule['clipped_valid_pairs_after_stage1']):,}"
+        )
+        ax.text(
+            0.96,
+            0.92,
+            annotation,
+            transform=ax.transAxes,
+            ha="right",
+            va="top",
+            fontsize=6,
+            bbox={"boxstyle": "square,pad=0.15", "facecolor": "white", "edgecolor": "none", "alpha": 0.8},
+        )
+    handles, labels = axes[-1].get_legend_handles_labels()
+    unique = dict(zip(labels, handles))
+    fig.legend(unique.values(), unique.keys(), loc="lower center", ncol=2, bbox_to_anchor=(0.5, -0.04))
+    fig.suptitle("Target-only two-step outlier filtering", fontsize=9)
+    path = ANALYSIS_DIR / "outlier_target_two_step_filter_40131_30sample.png"
+    fig.savefig(path, dpi=600)
+    fig.savefig(path.with_suffix(".pdf"))
+    plt.close(fig)
+    return path
+
+
+def update_outlier_analysis_markdown(two_step: pd.DataFrame) -> None:
+    analysis_md = ANALYSIS_DIR / "outlier_analysis.md"
+    two_step_display = two_step.copy()
+    summary_text = f"""
+# Target-only two-step outlier filtering
+
+這是目前主檢查要看的 target-based 規則，不使用 prediction value 來決定 outlier boundary。
+
+流程：
+
+- Step 1: 對 target values 計算 mean ± 3 SD，先移除超過這個範圍的 target rows。
+- Step 2: 在 Step 1 保留下來的 target values 上重新計算 mean 和 SD。
+- Step 3: 對 Step 1 保留下來但超過重新計算後 mean ± 3 SD 的 target values 做 clipping；這一步不刪 row。
+
+| variable | valid rows | removed in step 1 | removed % | clipped in step 2 | clipped % among kept |
+| --- | ---: | ---: | ---: | ---: | ---: |
+{chr(10).join(
+    "| {variable} | {valid_rows_before_outlier_rule:,} | {removed_stage1_valid_pairs:,} | {removed_stage1_pct_of_valid:.3f} | {clipped_valid_pairs_after_stage1:,} | {clipped_pct_of_stage1_kept:.3f} |".format(**row)
+    for row in two_step_display.to_dict(orient="records")
+)}
+
+![Target-only two-step filter](outlier_target_two_step_filter_40131_30sample.png)
+
+重點解讀：
+
+- Respiratory Rate 的第一步 SD 被兩個巨大 target outliers 拉大；移除後重新計算 SD，才會有 730 筆進入 clipping。
+- SpO2 第一階段只移除 1 筆，但重算 SD 後有 843 筆被 clipping。
+- Magnesium 第一階段移除 54 筆，第二階段 clipping 70 筆；Magnesium 少很多 row 的主要原因仍然是原本 valid target/prediction pair 少，不是 prediction-based deletion。
+
+"""
+    start = "<!-- TARGET_TWO_STEP_FILTER:START -->"
+    end = "<!-- TARGET_TWO_STEP_FILTER:END -->"
+    block = f"{start}\n{summary_text.strip()}\n{end}\n"
+    text = analysis_md.read_text(encoding="utf-8")
+    if start in text and end in text:
+        text = text.split(start)[0].rstrip() + "\n\n" + block + "\n" + text.split(end, 1)[1].lstrip()
+    else:
+        text = block + "\n" + text
+    analysis_md.write_text(text, encoding="utf-8")
+
+
 def markdown_table(df: pd.DataFrame, columns: list[str], float_cols: set[str]) -> str:
     table = df[columns].copy()
     for column in float_cols:
         if column in table:
             table[column] = table[column].map(lambda value: "" if pd.isna(value) else f"{value:.3f}")
-    return table.to_markdown(index=False)
+    table = table.fillna("")
+    rows = ["| " + " | ".join(columns) + " |", "| " + " | ".join(["---"] * len(columns)) + " |"]
+    for row in table.itertuples(index=False, name=None):
+        rows.append("| " + " | ".join(str(value) for value in row) + " |")
+    return "\n".join(rows)
 
 
-def update_markdown(accounting: pd.DataFrame, plot_paths: list[Path]) -> None:
+def update_markdown(accounting: pd.DataFrame, two_step: pd.DataFrame, plot_paths: list[Path]) -> None:
     outlier_md = OUT_DIR / "outlier_sensitivity_analysis_40131_30sample.md"
-    standard = accounting[accounting["rule"].isin(["target_abs_le_1000", "target_iqr3", "target_and_pred_iqr3"])]
+    standard = accounting[
+        accounting["rule"].isin(["target_abs_le_1000", "target_3sd_clip_after_3sd_removal", "target_iqr3", "target_and_pred_iqr3"])
+    ]
+    two_step_display = two_step.copy()
+    for column in [
+        "first_pass_mean",
+        "first_pass_sd",
+        "first_pass_low",
+        "first_pass_high",
+        "second_pass_mean_after_stage1",
+        "second_pass_sd_after_stage1",
+        "clip_low",
+        "clip_high",
+        "removed_stage1_pct_of_valid",
+        "clipped_pct_of_stage1_kept",
+    ]:
+        two_step_display[column] = two_step_display[column].astype(float)
     summary_text = f"""
 
 ---
@@ -374,6 +566,18 @@ These plots separate three different concepts that were previously easy to confu
 ### Key table: standard rules
 
 {markdown_table(standard, ["rule", "variable", "valid_rows_before_outlier_rule", "kept_rows", "removed_by_outlier_rule", "removed_pct_of_valid"], {"removed_pct_of_valid"})}
+
+### Target-only two-step 3SD + clipping
+
+This rule is target-based only. The prediction value is used only to decide whether a row is evaluable, not to set the outlier boundary.
+
+Step 1 removes target values outside mean ± 3 SD. Step 2 recomputes mean and SD after Step 1, then clips remaining target values to the recomputed mean ± 3 SD range.
+
+{markdown_table(two_step_display, ["variable", "valid_rows_before_outlier_rule", "removed_stage1_valid_pairs", "removed_stage1_pct_of_valid", "kept_valid_pairs_after_stage1", "clipped_valid_pairs_after_stage1", "clipped_pct_of_stage1_kept"], {"removed_stage1_pct_of_valid", "clipped_pct_of_stage1_kept"})}
+
+![Target-only two-step filter](outlier_analysis/outlier_target_two_step_filter_40131_30sample.png)
+
+**Figure 0.** Target-only two-step rule requested for the main outlier check. Dashed orange lines are the first mean ± 3 SD removal boundary. Solid blue lines are the recomputed mean ± 3 SD clipping boundary. Clipping changes target values; it does not delete additional rows.
 
 ### Figures
 
@@ -394,6 +598,8 @@ Generated files:
 {chr(10).join(f"- `{path.name}`" for path in plot_paths)}
 - `outlier_removal_accounting_40131_30sample.csv`
 - `outlier_removed_data_examples_40131_30sample.csv`
+- `outlier_target_two_step_filter_40131_30sample.csv`
+- `outlier_target_two_step_examples_40131_30sample.csv`
 """
     start = "<!-- DELETED_ROW_VISUALIZATION:START -->"
     end = "<!-- DELETED_ROW_VISUALIZATION:END -->"
@@ -408,23 +614,29 @@ Generated files:
 
 def main() -> None:
     target, pred = load_frames()
-    masks, bound_rows = build_rule_masks(target, pred)
+    masks, bound_rows, two_step = build_rule_masks(target, pred)
     bounds_df = pd.DataFrame(bound_rows)
     accounting = build_accounting(target, pred, masks)
     examples = build_removed_examples(target, pred, masks)
+    two_step_examples = build_two_step_examples(target, pred, two_step)
 
     accounting.to_csv(OUT_DIR / "outlier_removal_accounting_40131_30sample.csv", index=False)
     bounds_df.to_csv(OUT_DIR / "outlier_removal_rule_bounds_40131_30sample.csv", index=False)
     examples.to_csv(OUT_DIR / "outlier_removed_data_examples_40131_30sample.csv", index=False)
+    two_step.to_csv(OUT_DIR / "outlier_target_two_step_filter_40131_30sample.csv", index=False)
+    two_step_examples.to_csv(OUT_DIR / "outlier_target_two_step_examples_40131_30sample.csv", index=False)
 
     plot_paths = [
+        plot_two_step_filter(target, pred, two_step),
         plot_accounting(accounting),
         plot_removed_counts(accounting),
         plot_target_distributions(target, pred, bounds_df),
     ]
-    update_markdown(accounting, plot_paths)
+    update_markdown(accounting, two_step, plot_paths)
+    update_outlier_analysis_markdown(two_step)
 
     print(accounting.to_string(index=False))
+    print(two_step.to_string(index=False))
     print("Wrote:")
     for path in plot_paths:
         print(path)

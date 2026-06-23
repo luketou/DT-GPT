@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name="dtgpt-mimic-dora-vllm5602"
+#SBATCH --job-name="dtgpt-mimic-paper-r2-vllm"
 #SBATCH --partition=l40s
 #SBATCH --account=l40s
 #SBATCH --nodes=1
@@ -7,8 +7,8 @@
 #SBATCH --gres=gpu:1
 #SBATCH --time=1-0:0
 #SBATCH --array=0-7%4
-#SBATCH --output=logs/mimic_dora_vllm5602_shard_%A_%a.out
-#SBATCH --error=logs/mimic_dora_vllm5602_shard_%A_%a.err
+#SBATCH --output=logs/mimic_dora_paper_r2_vllm_shard_%A_%a.out
+#SBATCH --error=logs/mimic_dora_paper_r2_vllm_shard_%A_%a.err
 #SBATCH --chdir=/share/home/r15543056/trajectory_forecast/DT-GPT
 
 set -euo pipefail
@@ -33,7 +33,7 @@ export DTGPT_TOKENIZER_MODEL_PATH="${DTGPT_TOKENIZER_MODEL_PATH:-/home/r15543056
 export DTGPT_MIMIC_DATA_ROOT="${DTGPT_MIMIC_DATA_ROOT:-/share/home/r15543056/trajectory_forecast/DT-GPT/1_experiments/2024_02_08_mimic_iv/1_data}"
 export DTGPT_MIMIC_RAW_EVENTS_DIR="${DTGPT_MIMIC_RAW_EVENTS_DIR:-${DTGPT_MIMIC_DATA_ROOT}/1_preprocessing/1_raw_events/csv}"
 export DTGPT_MIMIC_RAW_STATS_PATH="${DTGPT_MIMIC_RAW_STATS_PATH:-${DTGPT_MIMIC_DATA_ROOT}/1_preprocessing/2024_02_01_raw_data_stats.json}"
-export DTGPT_PATIENT_SPLIT_FRACTION="${DTGPT_PATIENT_SPLIT_FRACTION:-0.5}"
+export DTGPT_PATIENT_SPLIT_FRACTION="${DTGPT_PATIENT_SPLIT_FRACTION:-1.0}"
 export DTGPT_RUNTIME_CACHE_ROOT="${DTGPT_RUNTIME_CACHE_ROOT:-/tmp/dtgpt_runtime_cache}"
 export HF_HOME="${HF_HOME:-${DTGPT_RUNTIME_CACHE_ROOT}/hf_home}"
 unset TRANSFORMERS_CACHE
@@ -57,16 +57,16 @@ unset TRANSFORMERS_CACHE
 "${PYTHON_BIN}" -c "import vllm, openai, pandas, torch; print('vLLM env OK', getattr(vllm, '__version__', 'unknown'))"
 
 EVAL_SCRIPT="1_experiments/2024_02_08_mimic_iv/4_dt_gpt_instruction/2024_04_11_biomistral_td_bd_summarized_row/2024_04_15_dt_gpt_bd_bm_summarized_row_mimic_eval.py"
-CHECKPOINT_PATH="${DTGPT_EVAL_MODEL_PATH:-${REPO_ROOT}/3_results/raw_experiments/DT-GPTsetup/setup/2026_06_03___00_41_58_574883/models/checkpoint-5602}"
-FULL_MODEL_PATH="${DTGPT_VLLM_FULL_MODEL_PATH:-${REPO_ROOT}/3_results/checkpoint/merge_for_vllm/checkpoint-5602-4epoch-merged-vllm}"
+CHECKPOINT_PATH="${DTGPT_EVAL_MODEL_PATH:-${REPO_ROOT}/3_results/raw_experiments/DT-GPTsetup/setup/2026_06_10___16_08_28_882856/models/fine_tuned_lora_adapter}"
+FULL_MODEL_PATH="${DTGPT_VLLM_FULL_MODEL_PATH:-${REPO_ROOT}/3_results/checkpoint/merge_for_vllm/paper-r2-merged-vllm}"
 export DTGPT_EVAL_NUM_SHARDS="${DTGPT_EVAL_NUM_SHARDS:-8}"
 export DTGPT_EVAL_SHARD_INDEX="${SLURM_ARRAY_TASK_ID:-${DTGPT_EVAL_SHARD_INDEX:-0}}"
 PORT="${DTGPT_VLLM_PORT:-$((18100 + DTGPT_EVAL_SHARD_INDEX))}"
-SERVED_MODEL="${DTGPT_VLLM_MODEL_NAME:-dtgpt_mimic_dora_checkpoint5602}"
+SERVED_MODEL="${DTGPT_VLLM_MODEL_NAME:-dtgpt_mimic_dora_paper_r2}"
 SERVER_LOG="logs/mimic_dora_vllm_server_${SLURM_ARRAY_JOB_ID:-${SLURM_JOB_ID}}_${DTGPT_EVAL_SHARD_INDEX}.log"
 VLLM_MAX_MODEL_LEN="${DTGPT_VLLM_MAX_MODEL_LEN:-4096}"
-CLIENT_SEQ_MAX_LEN="${DTGPT_SEQ_MAX_LEN:-3400}"
-MAX_NEW_TOKENS="${DTGPT_MAX_NEW_TOKENS:-900}"
+CLIENT_SEQ_MAX_LEN="${DTGPT_SEQ_MAX_LEN:-2048}"
+MAX_NEW_TOKENS="${DTGPT_MAX_NEW_TOKENS:-256}"
 MAX_CONCURRENT_REQUESTS="${DTGPT_MAX_CONCURRENT_REQUESTS:-8}"
 NUM_SAMPLES_TO_GENERATE="${DTGPT_NUM_SAMPLES_TO_GENERATE:-30}"
 VLLM_TOTAL_MAX_LENGTH="${DTGPT_VLLM_TOTAL_MAX_LENGTH:-4092}"

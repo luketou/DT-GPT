@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="drawio" version="26.0.0">
+  <diagram name="Fine-tune Merge vLLM Eval Workflow">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1320" pageHeight="760" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="2" value="Fine-tune → Merge for vLLM → Evaluation 工作流" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=24;fontStyle=1;fontColor=#1f2937;" vertex="1" parent="1">
+          <mxGeometry x="210" y="20" width="900" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="3" value="開始&#xa;定義資料集、base model、LoRA/DoRA 設定" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;fontColor=#1f2937;" vertex="1" parent="1">
+          <mxGeometry x="40" y="250" width="150" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="4" value="1. Fine-tune" style="swimlane;startSize=34;whiteSpace=wrap;html=1;fillColor=#f8fafc;strokeColor=#6c8ebf;fontStyle=1;fontSize=15;fontColor=#1f2937;" vertex="1" parent="1">
+          <mxGeometry x="220" y="90" width="320" height="550" as="geometry" />
+        </mxCell>
+        <mxCell id="5" value="資料準備&#xa;build raw events / metadata / final data" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=12;fontColor=#1f2937;" vertex="1" parent="4">
+          <mxGeometry x="60" y="60" width="200" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="6" value="環境與 cache&#xa;install dtgpt-unsloth&#xa;build tokenized cache" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;fontColor=#1f2937;" vertex="1" parent="4">
+          <mxGeometry x="60" y="160" width="200" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="7" value="啟動 fine-tune&#xa;submit_mimic_dora_r64_paper_r2_l40s.sh&#xa;或 resume / smoke variants" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;fontColor=#1f2937;" vertex="1" parent="4">
+          <mxGeometry x="45" y="270" width="230" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="8" value="輸出 adapter checkpoint&#xa;保留 checkpoint 編號、訓練 log、config" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;fontColor=#1f2937;" vertex="1" parent="4">
+          <mxGeometry x="60" y="400" width="200" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="9" value="2. Merge for vLLM" style="swimlane;startSize=34;whiteSpace=wrap;html=1;fillColor=#f8fafc;strokeColor=#9673a6;fontStyle=1;fontSize=15;fontColor=#1f2937;" vertex="1" parent="1">
+          <mxGeometry x="610" y="90" width="320" height="550" as="geometry" />
+        </mxCell>
+        <mxCell id="10" value="選定 checkpoint&#xa;例如 700 / 1395 / best metric" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;fontColor=#1f2937;" vertex="1" parent="9">
+          <mxGeometry x="80" y="70" width="160" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="11" value="合併 adapter → base model&#xa;submit_mimic_dora_checkpoint_merge_for_vllm.sh" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;fontColor=#1f2937;" vertex="1" parent="9">
+          <mxGeometry x="45" y="200" width="230" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="12" value="產生 vLLM 可載入目錄&#xa;merged HF weights + tokenizer + config" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;fontColor=#1f2937;" vertex="1" parent="9">
+          <mxGeometry x="55" y="320" width="210" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="13" value="vLLM inference server / engine&#xa;install dtgpt-vllm&#xa;確認 GPU memory、tensor parallel" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;fontColor=#1f2937;" vertex="1" parent="9">
+          <mxGeometry x="45" y="440" width="230" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="14" value="3. Evaluation" style="swimlane;startSize=34;whiteSpace=wrap;html=1;fillColor=#f8fafc;strokeColor=#82b366;fontStyle=1;fontSize=15;fontColor=#1f2937;" vertex="1" parent="1">
+          <mxGeometry x="1000" y="90" width="320" height="550" as="geometry" />
+        </mxCell>
+        <mxCell id="15" value="批次推論&#xa;submit_mimic_dora_checkpoint_vllm_eval_array.sh&#xa;或 eval shard jobs" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;fontColor=#1f2937;" vertex="1" parent="14">
+          <mxGeometry x="45" y="70" width="230" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="16" value="收集 predictions&#xa;合併 shards、檢查缺漏、保留 prompt/output" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=12;fontColor=#1f2937;" vertex="1" parent="14">
+          <mxGeometry x="55" y="200" width="210" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="17" value="計算 metrics&#xa;AUROC / AUPRC / calibration / subgroup&#xa;輸出 plots 與 summary table" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;fontColor=#1f2937;" vertex="1" parent="14">
+          <mxGeometry x="45" y="320" width="230" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="18" value="結果是否達標？&#xa;和 baseline、上一版 checkpoint 比較" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;fontColor=#1f2937;" vertex="1" parent="14">
+          <mxGeometry x="70" y="445" width="180" height="94" as="geometry" />
+        </mxCell>
+        <mxCell id="19" value="完成&#xa;固定模型版本、記錄 commands、整理 paper / report 表格" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;fontColor=#1f2937;" vertex="1" parent="1">
+          <mxGeometry x="1120" y="670" width="180" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="20" value="回饋 fine-tune 設定&#xa;調整資料、rank、LR、epochs、checkpoint 選擇" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=12;fontColor=#1f2937;" vertex="1" parent="1">
+          <mxGeometry x="560" y="670" width="260" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="21" value="停止條件：evaluation 指標達標且可重現；否則把失敗樣本、metrics、資源限制回饋到 fine-tune/merge 設定。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=12;fontColor=#374151;" vertex="1" parent="1">
+          <mxGeometry x="220" y="660" width="290" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="22" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="3" target="5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="23" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="5" target="6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="24" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="6" target="7">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="25" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="7" target="8">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="26" value="adapter checkpoint" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="8" target="10">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="575" y="531" />
+              <mxPoint x="575" y="205" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="27" value="選定" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="10" target="11">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="28" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="11" target="12">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="29" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="12" target="13">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="30" value="merged model dir" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="13" target="15">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="965" y="571" />
+              <mxPoint x="965" y="203" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="31" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="15" target="16">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="32" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="16" target="17">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="33" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="17" target="18">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="34" value="達標" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.75;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="18" target="19">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="35" value="未達標" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.25;exitY=1;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;fontSize=11;fontColor=#374151;" edge="1" parent="1" source="18" target="20">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1080" y="705" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="36" value="下一輪設定" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;fontSize=11;fontColor=#b85450;strokeColor=#b85450;" edge="1" parent="1" source="20" target="7">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="420" y="705" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

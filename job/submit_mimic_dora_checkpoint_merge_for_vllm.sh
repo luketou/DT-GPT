@@ -1,13 +1,13 @@
 #!/bin/bash
-#SBATCH --job-name="dtgpt-mimic-dora-merge"
+#SBATCH --job-name="dtgpt-mimic-paper-r2-merge"
 #SBATCH --partition=l40s
 #SBATCH --account=l40s
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:1
 #SBATCH --time=4:00:00
-#SBATCH --output=logs/mimic_dora_merge_%j.out
-#SBATCH --error=logs/mimic_dora_merge_%j.err
+#SBATCH --output=logs/mimic_dora_paper_r2_merge_%j.out
+#SBATCH --error=logs/mimic_dora_paper_r2_merge_%j.err
 #SBATCH --chdir=/share/home/r15543056/trajectory_forecast/DT-GPT
 
 set -euo pipefail
@@ -48,10 +48,8 @@ else
 fi
 unset TRANSFORMERS_CACHE
 
-# CHECKPOINT_PATH="${DTGPT_EVAL_MODEL_PATH:-${REPO_ROOT}/3_results/raw_experiments/DT-GPTsetup/setup/2026_05_04___20_28_41_718957/models/checkpoint-700}"
-# MERGED_MODEL_PATH="${DTGPT_VLLM_FULL_MODEL_PATH:-${REPO_ROOT}/3_results/raw_experiments/DT-GPTsetup/setup/2026_05_04___20_28_41_718957/models/checkpoint-700-merged-vllm}"
-CHECKPOINT_PATH="${DTGPT_EVAL_MODEL_PATH:-${REPO_ROOT}/3_results/checkpoint/checkpoint-5602-4epoch}"
-MERGED_MODEL_PATH="${DTGPT_VLLM_FULL_MODEL_PATH:-${REPO_ROOT}/3_results/checkpoint/merge_for_vllm/checkpoint-5602-4epoch-merged-vllm}"
+CHECKPOINT_PATH="${DTGPT_EVAL_MODEL_PATH:-${REPO_ROOT}/3_results/raw_experiments/DT-GPTsetup/setup/2026_06_10___16_08_28_882856/models/fine_tuned_lora_adapter}"
+MERGED_MODEL_PATH="${DTGPT_VLLM_FULL_MODEL_PATH:-${REPO_ROOT}/3_results/checkpoint/merge_for_vllm/paper-r2-merged-vllm}"
 echo "Python binary: ${PYTHON_BIN}"
 echo "Base model: ${DTGPT_BIOMISTRAL_MODEL_PATH}"
 echo "Adapter checkpoint: ${CHECKPOINT_PATH}"
@@ -61,7 +59,8 @@ echo "Merged model output: ${MERGED_MODEL_PATH}"
     --base-model "${DTGPT_BIOMISTRAL_MODEL_PATH}" \
     --adapter-path "${CHECKPOINT_PATH}" \
     --output-path "${MERGED_MODEL_PATH}" \
-    --cache-dir "${REPO_ROOT}/3_cache"
+    --cache-dir "${REPO_ROOT}/3_cache" \
+    --device-map "${DTGPT_MERGE_DEVICE_MAP:-none}"
 
 if command -v sbatch_post.sh >/dev/null 2>&1; then
     sbatch_post.sh

@@ -118,17 +118,36 @@ These plots separate three different concepts that were previously easy to confu
 
 ### Key table: standard rules
 
-| rule                 | variable         |   valid_rows_before_outlier_rule |   kept_rows |   removed_by_outlier_rule |   removed_pct_of_valid |
-|:---------------------|:-----------------|---------------------------------:|------------:|--------------------------:|-----------------------:|
-| target_abs_le_1000   | Respiratory Rate |                           101084 |      101083 |                         1 |                  0.001 |
-| target_abs_le_1000   | SpO2             |                            99599 |       99598 |                         1 |                  0.001 |
-| target_abs_le_1000   | Magnesium        |                             6929 |        6929 |                         0 |                  0     |
-| target_iqr3          | Respiratory Rate |                           101084 |      100970 |                       114 |                  0.113 |
-| target_iqr3          | SpO2             |                            99599 |       99307 |                       292 |                  0.293 |
-| target_iqr3          | Magnesium        |                             6929 |        6890 |                        39 |                  0.563 |
-| target_and_pred_iqr3 | Respiratory Rate |                           101084 |      100433 |                       651 |                  0.644 |
-| target_and_pred_iqr3 | SpO2             |                            99599 |       99195 |                       404 |                  0.406 |
-| target_and_pred_iqr3 | Magnesium        |                             6929 |        6783 |                       146 |                  2.107 |
+| rule | variable | valid_rows_before_outlier_rule | kept_rows | removed_by_outlier_rule | removed_pct_of_valid |
+| --- | --- | --- | --- | --- | --- |
+| target_abs_le_1000 | Respiratory Rate | 101084 | 101083 | 1 | 0.001 |
+| target_abs_le_1000 | SpO2 | 99599 | 99598 | 1 | 0.001 |
+| target_abs_le_1000 | Magnesium | 6929 | 6929 | 0 | 0.000 |
+| target_3sd_clip_after_3sd_removal | Respiratory Rate | 101084 | 101082 | 2 | 0.002 |
+| target_3sd_clip_after_3sd_removal | SpO2 | 99599 | 99598 | 1 | 0.001 |
+| target_3sd_clip_after_3sd_removal | Magnesium | 6929 | 6875 | 54 | 0.779 |
+| target_iqr3 | Respiratory Rate | 101084 | 100970 | 114 | 0.113 |
+| target_iqr3 | SpO2 | 99599 | 99307 | 292 | 0.293 |
+| target_iqr3 | Magnesium | 6929 | 6890 | 39 | 0.563 |
+| target_and_pred_iqr3 | Respiratory Rate | 101084 | 100433 | 651 | 0.644 |
+| target_and_pred_iqr3 | SpO2 | 99599 | 99195 | 404 | 0.406 |
+| target_and_pred_iqr3 | Magnesium | 6929 | 6783 | 146 | 2.107 |
+
+### Target-only two-step 3SD + clipping
+
+This rule is target-based only. The prediction value is used only to decide whether a row is evaluable, not to set the outlier boundary.
+
+Step 1 removes target values outside mean ± 3 SD. Step 2 recomputes mean and SD after Step 1, then clips remaining target values to the recomputed mean ± 3 SD range.
+
+| variable | valid_rows_before_outlier_rule | removed_stage1_valid_pairs | removed_stage1_pct_of_valid | kept_valid_pairs_after_stage1 | clipped_valid_pairs_after_stage1 | clipped_pct_of_stage1_kept |
+| --- | --- | --- | --- | --- | --- | --- |
+| Respiratory Rate | 101084 | 2 | 0.002 | 101082 | 730 | 0.722 |
+| SpO2 | 99599 | 1 | 0.001 | 99598 | 843 | 0.846 |
+| Magnesium | 6929 | 54 | 0.779 | 6875 | 70 | 1.018 |
+
+![Target-only two-step filter](outlier_analysis/outlier_target_two_step_filter_40131_30sample.png)
+
+**Figure 0.** Target-only two-step rule requested for the main outlier check. Dashed orange lines are the first mean ± 3 SD removal boundary. Solid blue lines are the recomputed mean ± 3 SD clipping boundary. Clipping changes target values; it does not delete additional rows.
 
 ### Figures
 
@@ -146,9 +165,12 @@ These plots separate three different concepts that were previously easy to confu
 
 Generated files:
 
+- `outlier_target_two_step_filter_40131_30sample.png`
 - `outlier_removal_accounting_40131_30sample.png`
 - `outlier_removed_counts_only_40131_30sample.png`
 - `outlier_target_distribution_thresholds_40131_30sample.png`
 - `outlier_removal_accounting_40131_30sample.csv`
 - `outlier_removed_data_examples_40131_30sample.csv`
+- `outlier_target_two_step_filter_40131_30sample.csv`
+- `outlier_target_two_step_examples_40131_30sample.csv`
 <!-- DELETED_ROW_VISUALIZATION:END -->
